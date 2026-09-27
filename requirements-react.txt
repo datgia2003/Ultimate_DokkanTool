@@ -1,0 +1,6 @@
+requests
+Pillow
+streamlit
+pandas
+openpyxl
+cricodecs==1.2.0

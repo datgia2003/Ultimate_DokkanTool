@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Montserrat', sans-serif;
+  }
+
+  /* Main Flex Layout holding Card */
+  .player-flex-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  /* 3D Perspective Card Container */
+  .card-perspective {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 852 / 1136;
+    perspective: 1500px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 3D Flipper Element */
+  .card-flipper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transition: transform 0.65s cubic-bezier(0.34, 1.4, 0.64, 1);
+    border-radius: 16px;
+    border: 3px solid #ff9f1c;
+    box-shadow: 0 8px 30px rgba(255, 159, 28, 0.4), 0 4px 18px rgba(0, 0, 0, 0.85);
+    background: #000000;
+  }
+
+  .card-flipper.is-flipped {
+    transform: rotateY(180deg);
+  }
+
+  /* Card Faces (Front: LWF Anim, Back: Static HD Art) */
+  .card-face {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 13px;
+    overflow: hidden;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #000000;
+  }
+
+  /* Front Face: LWF Animation */
+  .card-face-anim {
+    z-index: 2;
+    transform: rotateY(0deg);
+    isolation: isolate;
+  }
+
+  #anim-poster {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.42;
+    filter: saturate(0.8) brightness(0.48) blur(2px);
+    transform: scale(1.015);
+    transition: opacity 0.45s ease, filter 0.45s ease;
+    z-index: 0;
+  }
+
+  #canvas {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 852 / 1136;
+    object-fit: cover !important;
+    image-rendering: -webkit-optimize-contrast;
+    display: block !important;
+    position: relative;
+    z-index: 1;
+    opacity: 0;
+    transform: scale(0.992);
+    transition: opacity 0.4s ease, transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #canvas.is-ready {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .card-face-anim:has(#canvas.is-ready) #anim-poster {
+    opacity: 0;
+    filter: none;
+  }
+
+  /* Back Face: Static Ultra-HD Art */
+  .card-face-static {
+    z-index: 1;
+    transform: rotateY(180deg);
+    background: #000000;
+  }
+
+  #static-art-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+  }
+
+  /* Holographic Flash Overlay on Flip */
+  .flip-flash {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 18px;
+    background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,215,0,0.5) 45%, rgba(255,255,255,0) 75%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 15;
+  }
+  .card-flipper.flipping .flip-flash {
+    opacity: 0.75;
+  }
+
+  /* Loading Overlay */
+  .lwf-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 18px;
+    background: rgba(10, 13, 20, 0.88);
+    backdrop-filter: blur(4px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    z-index: 30;
+    transition: opacity 0.35s ease, visibility 0s linear 0s;
+  }
+  .lwf-loading.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.35s ease, visibility 0s linear 0.35s;
+  }
+  .spinner {
+    width: 44px;
+    height: 44px;
+    border: 4px solid rgba(255, 202, 40, 0.2);
+    border-top: 4px solid #ffca28;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+  .loading-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffca28;
+    letter-spacing: 0.3px;
+    text-align: center;
+    padding: 0 14px;
+    max-width: 280px;
+  }
+</style>
+<script src="lwf.js"></script>
+</head>
+<body>
+
+<div class="player-flex-container">
+  
+  <!-- 3D Card Perspective Frame (Height: 620px) -->
+  <div class="card-perspective">
+    <div class="card-flipper" id="card-flipper">
+      
+      <!-- Front Face: LWF 60FPS Live Animation -->
+      <div class="card-face card-face-anim" id="face-anim">
+        <img id="anim-poster" src="" alt="">
+        <canvas id="canvas"></canvas>
+      </div>
+
+      <!-- Back Face: 2x Ultra-HD Composite Card Art -->
+      <div class="card-face card-face-static" id="face-static">
+        <img id="static-art-img" src="" alt="Card Art">
+      </div>
+
+      <!-- Flash Effect Overlay -->
+      <div class="flip-flash" id="flip-flash"></div>
+
+      <!-- Loading Overlay -->
+      <div class="lwf-loading" id="lwf-loading">
+        <div class="spinner"></div>
+        <div class="loading-text" id="lwf-loading-text">Nạp Card Assets...</div>
+      </div>
+
+    </div>
+  </div>
+
+
+
+</div>
+
+<script type="module">
+import { LwfPackPlayer, extractSheetNames } from './lwf-pack.js?v=dokkan2026_v2';
+
+let currentCardKey = null;
+let serverPort = 8502;
+let player = null;
+let isFlipped = false;
+let isLrCard = false;
+let loadGeneration = 0;
+let activeLoadController = null;
+let isHostVisible = true;
+
+const flipper = document.getElementById("card-flipper");
+const canvas = document.getElementById("canvas");
+const staticImg = document.getElementById("static-art-img");
+const animPoster = document.getElementById("anim-poster");
+const loadingEl = document.getElementById("lwf-loading");
+const loadingTextEl = document.getElementById("lwf-loading-text");
+
+function updateFrameHeight() {
+  const h = 620;
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setFrameHeight",
+    height: h
+  }, "*");
+}
+
+player = new LwfPackPlayer(canvas, (msg) => console.log("[LWF]", msg));
+player.loopMovie = true;
+
+function updatePlaybackVisibility() {
+  if (!player?.lwf || !player?.movie) return;
+  if (isFlipped || document.hidden || !isHostVisible) {
+    if (player.playing) player.pause();
+  } else if (!player.playing) {
+    player.play();
+  }
+}
+
+async function fetchAsset(url, parentSignal, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal, cache: "no-store" });
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function revealAnimationWhenPainted(generation) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (generation !== loadGeneration) return;
+    canvas.classList.add("is-ready");
+    loadingEl.classList.add("hidden");
+  }));
+}
+
+// 3D Flip Card Action
+function toggleCardFlip() {
+  flipper.classList.add("flipping");
+  isFlipped = !isFlipped;
+  
+  if (isFlipped) {
+    flipper.classList.add("is-flipped");
+  } else {
+    flipper.classList.remove("is-flipped");
+  }
+  updatePlaybackVisibility();
+
+  try {
+    window.parent.postMessage({
+      type: "dokkan:faceChanged",
+      isFlipped: isFlipped,
+      face: isFlipped ? "art" : "anim"
+    }, "*");
+  } catch(e) {}
+
+  setTimeout(() => {
+    flipper.classList.remove("flipping");
+  }, 400);
+}
+
+async function loadUnifiedCard(folderId, cardId, cardName, borderColor, glowColor, isLr, staticB64) {
+  if (!folderId && !cardId) return;
+  const generation = ++loadGeneration;
+  activeLoadController?.abort();
+  activeLoadController = new AbortController();
+  const loadSignal = activeLoadController.signal;
+  const rawId = String(folderId || cardId || "").trim();
+  const fidStr = (rawId.length > 1) ? (rawId.slice(0, -1) + "0") : rawId;
+
+  if (borderColor) {
+    flipper.style.borderColor = borderColor;
+  }
+  if (glowColor) {
+    flipper.style.boxShadow = `0 10px 42px ${glowColor}, 0 4px 22px rgba(0, 0, 0, 0.95)`;
+  }
+  
+  isLrCard = !!isLr;
+  
+  // Update static art immediately
+  staticImg.onerror = () => {
+    if (staticImg.src.indexOf('/api/v2/card-art/') === -1) {
+      staticImg.src = `/api/v2/card-art/${rawId}`;
+    }
+  };
+  animPoster.onerror = () => {
+    if (animPoster.src.indexOf('/api/v2/card-art/') === -1) {
+      animPoster.src = `/api/v2/card-art/${rawId}`;
+    }
+  };
+
+  if (staticB64) {
+    staticImg.src = staticB64;
+    animPoster.src = staticB64;
+  } else {
+    staticImg.src = `/api/v2/card-art/${rawId}`;
+    animPoster.src = staticImg.src;
+  }
+  
+  // If Non-LR: Show static face directly
+  if (!isLrCard) {
+    flipper.classList.add("is-flipped");
+    loadingEl.classList.add("hidden");
+    return;
+  }
+  
+  if (isFlipped) {
+    flipper.classList.remove("is-flipped");
+    isFlipped = false;
+  }
+  
+  if (fidStr === currentCardKey && player && player.lwf) {
+    canvas.classList.add("is-ready");
+    loadingEl.classList.add("hidden");
+    return;
+  }
+  
+  currentCardKey = fidStr;
+  player._folderId = fidStr;
+  player._port = serverPort;
+  
+  loadingEl.classList.remove("hidden");
+  canvas.classList.remove("is-ready");
+  loadingTextEl.textContent = `Nạp LWF #${fidStr}...`;
+  
+  player.clear();
+  
+  // 1. Fetch .lwf file from local proxy
+  let lwfBlob = null;
+  const lwfCandidates = [`card_${fidStr}.lwf`, `${fidStr}.lwf`];
+  
+  for (const fn of lwfCandidates) {
+    const url = `http://localhost:${serverPort}/card_bg/${fidStr}/${fn}`;
+    try {
+      const resp = await fetchAsset(url, loadSignal);
+      if (resp.ok) {
+        lwfBlob = await resp.blob();
+        lwfBlob.name = fn;
+        break;
+      }
+    } catch(e) {}
+  }
+  if (generation !== loadGeneration) return;
+  
+  if (!lwfBlob) {
+    loadingTextEl.textContent = `Chuyển sang Art tĩnh (#${fidStr})`;
+    flipper.classList.add("is-flipped");
+    isFlipped = true;
+    setTimeout(() => loadingEl.classList.add("hidden"), 300);
+    return;
+  }
+  
+  // 2. Extract texture sheet names directly from binary LWF header
+  const lwfBytes = new Uint8Array(await lwfBlob.arrayBuffer());
+  if (generation !== loadGeneration) return;
+  const exactSheets = extractSheetNames(lwfBytes);
+  
+  const blobList = [lwfBlob];
+  let downloaded = 0;
+  const totalSheets = exactSheets.length;
+  
+  let nextSheet = 0;
+  async function fetchSheetWorker() {
+    while (nextSheet < totalSheets && !loadSignal.aborted) {
+      const fn = exactSheets[nextSheet++];
+      const url = `http://localhost:${serverPort}/card_bg/${fidStr}/${fn}`;
+      try {
+        const resp = await fetchAsset(url, loadSignal);
+        if (resp.ok) {
+          const b = await resp.blob();
+          b.name = fn;
+          blobList.push(b);
+        }
+      } catch(e) {}
+      downloaded++;
+      const pct = Math.round((downloaded / Math.max(1, totalSheets)) * 100);
+      loadingTextEl.textContent = `Nạp Texture (${downloaded}/${totalSheets} - ${pct}%)...`;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, totalSheets) }, fetchSheetWorker));
+  if (generation !== loadGeneration) return;
+  loadingTextEl.textContent = "Khởi chạy LWF 60FPS...";
+  
+  try {
+    player.ingestFiles(blobList);
+    await player.prepare(lwfBlob);
+    const movies = await player.load();
+    if (generation !== loadGeneration) return;
+    
+    const lw = player.header?.width || player.lwf?.width || 852;
+    const lh = player.header?.height || player.lwf?.height || 1136;
+    flipper.style.aspectRatio = `${lw} / ${lh}`;
+    canvas.style.aspectRatio = `${lw} / ${lh}`;
+    
+    if (movies && movies.length > 0) {
+      player.setMovie(movies[0], { play: true });
+    } else if (player.lwf && player.lwf.rootMovie) {
+      player.play();
+    }
+    updatePlaybackVisibility();
+    
+    revealAnimationWhenPainted(generation);
+  } catch (err) {
+    if (generation !== loadGeneration) return;
+    console.error("LWF start error:", err);
+    flipper.classList.add("is-flipped");
+    isFlipped = true;
+    loadingEl.classList.add("hidden");
+  }
+}
+
+// Streamlit Component Render listener
+function onRender(event) {
+  const data = event.data?.args;
+  if (!data) return;
+
+  if (data.port) {
+    serverPort = data.port;
+  }
+  if (data.folder_id || data.card_id) {
+    loadUnifiedCard(
+      data.folder_id,
+      data.card_id,
+      data.card_name,
+      data.border_color,
+      data.glow_color,
+      data.is_lr,
+      data.static_art_b64
+    );
+  }
+  updateFrameHeight();
+}
+
+window.addEventListener("message", (event) => {
+  try {
+    if (!event || !event.data || typeof event.data !== 'object') return;
+    if (event.data.type === "streamlit:render") {
+      onRender(event);
+    } else if (event.data.type === "dokkan:flip" || event.data.type === "dokkan:toggleFace") {
+      toggleCardFlip();
+    } else if (event.data.type === "dokkan:setFace") {
+      if (event.data.face === "art" && !isFlipped) toggleCardFlip();
+      if (event.data.face === "anim" && isFlipped) toggleCardFlip();
+    } else if (event.data.type === "dokkan:setVisibility") {
+      isHostVisible = event.data.visible !== false;
+      updatePlaybackVisibility();
+    }
+  } catch (e) {}
+});
+
+document.addEventListener("visibilitychange", updatePlaybackVisibility);
+window.addEventListener("pagehide", () => {
+  activeLoadController?.abort();
+  player?.clear();
+});
+
+// Allow direct clicking on the 3D card to flip
+flipper.style.cursor = "pointer";
+flipper.title = "Click to 3D Flip (Animation ↔ Static Art)";
+flipper.addEventListener("click", toggleCardFlip);
+
+window.addEventListener("load", () => {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const qCard = p.get("card_id") || p.get("id");
+    const qFolder = p.get("folder_id") || (qCard ? (String(qCard).slice(0, -1) + "0") : null);
+    const qPort = Number(p.get("port") || p.get("server_port")) || 8585;
+    const qIsLr = p.get("is_lr") === "1" || p.get("rarity") === "5";
+    const qName = p.get("name") || "";
+    const qColor = p.get("element_color") || "#ff9f1c";
+    if (qCard || qFolder) {
+      serverPort = qPort;
+      loadUnifiedCard(qFolder, qCard, qName, qColor, `${qColor}88`, qIsLr, null);
+    }
+  } catch (e) {
+    console.error("LWF auto-load error:", e);
+  }
+});
+
+updateFrameHeight();
+</script>
+</body>
+</html>

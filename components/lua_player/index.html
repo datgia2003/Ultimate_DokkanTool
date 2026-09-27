@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dokkan Battle LUA Animation Studio</title>
+  <link rel="stylesheet" href="player.css" />
+  <script src="vendor/fengari-web.min.js"></script>
+  <script>
+    (function () {
+      if (globalThis.fengari && globalThis.fengari.lua) return;
+      try {
+        if (typeof module !== 'undefined' && module.exports && module.exports.lua) {
+          globalThis.fengari = module.exports;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <script src="vendor/lwf.js"></script>
+  <script>window.__ECLIPSE_TOOL__ = "lua-player";</script>
+
+  <style>
+    /* Embed layout adjustments for Streamlit */
+    html, body {
+      background: transparent !important;
+      overflow: hidden !important;
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Outfit', sans-serif;
+    }
+    
+    .shell {
+      width: 100%;
+      height: 780px;
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      background: linear-gradient(135deg, rgba(14, 16, 26, 0.98), rgba(8, 9, 16, 0.99));
+      border: 2px solid #ff9f1c;
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 20px rgba(255, 159, 28, 0.25);
+      box-sizing: border-box;
+    }
+
+    .panel {
+      width: 320px;
+      min-width: 280px;
+      max-width: 340px;
+      height: 100%;
+      overflow-y: auto;
+      background: rgba(18, 20, 32, 0.95);
+      border: 1.5px solid #282a3c;
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-sizing: border-box;
+    }
+
+    .panel::-webkit-scrollbar {
+      width: 5px;
+    }
+    .panel::-webkit-scrollbar-thumb {
+      background: #3e425e;
+      border-radius: 4px;
+    }
+
+    body.compact-mode {
+      background: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: hidden !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+    }
+    body.compact-mode {
+      background: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: hidden !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+    }
+    body.compact-mode .shell {
+      width: 100% !important;
+      height: 100% !important;
+      max-height: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      background: transparent !important;
+      overflow: hidden !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+    }
+    body.compact-mode .panel {
+      display: none !important;
+    }
+    body.compact-mode .stage-wrap {
+      width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+      margin: 0 auto !important;
+      background: transparent !important;
+      overflow: hidden !important;
+      position: relative !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+    }
+    .stage-layout {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      width: 100%;
+      height: 100%;
+    }
+    body.compact-mode .stage-fit {
+      border: 2.5px solid var(--element-color, #ff9f1c) !important;
+      border-radius: 16px !important;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.95), 0 0 22px var(--element-glow, rgba(255,159,28,.45)) !important;
+      background: #000 !important;
+      position: relative !important;
+      overflow: hidden !important;
+      flex-shrink: 0;
+      background-clip: padding-box !important;
+    }
+    /* Keep anti-aliased rounded corners on the portrait stage backed by the
+       dark player surface instead of transparent pixels that can look white. */
+    html:has(body.compact-mode), body.compact-mode {
+      background-color: #080b12 !important;
+      background-image: radial-gradient(ellipse at 50% 48%, #121b29 0%, #080b12 72%) !important;
+    }
+    body.compact-mode .stage-wrap,
+    body.compact-mode .shell { background-color: #080b12 !important; }
+    body.compact-mode #statusBar,
+    body.compact-mode .status-hud,
+    body.compact-mode #hud,
+    body.compact-mode .hud {
+      display: none !important;
+    }
+
+    body.compact-mode .load-progress-widget {
+      position: fixed !important;
+      top: 10px !important;
+      bottom: auto !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      width: 92% !important;
+      max-width: 480px !important;
+      z-index: 999999 !important;
+      background: rgba(10, 12, 22, 0.96) !important;
+      border: 2px solid var(--element-color, #ff9f1c) !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.95), 0 0 16px var(--element-glow, rgba(255,159,28,.4)) !important;
+    }
+
+    .side-controls {
+      display: none !important;
+    }
+    .side-btn {
+      background: #141624;
+      border: 1.5px solid #2a2e48;
+      color: #e0e0e8;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 800;
+      font-size: 11.5px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+      min-width: 88px;
+    }
+    .side-btn:hover {
+      background: #1e2238;
+      border-color: #ffca28;
+      color: #ffca28;
+      transform: translateX(2px) scale(1.03);
+      box-shadow: 0 6px 16px rgba(255, 159, 28, 0.25);
+    }
+    .side-btn.active {
+      border-color: #ff9f1c;
+      color: #ffca28;
+      background: rgba(255, 159, 28, 0.18);
+    }
+
+    .ko-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 900;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      background: transparent;
+    }
+    .ko-screen.show { display: flex; animation: ko-screen-life 1s both; }
+    .ko-label {
+      position: relative;
+      z-index: 2;
+      color: #ffe66a;
+      font: 900 italic 96px/1 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -3px;
+      text-shadow: 0 3px 10px rgba(0,0,0,.55);
+      animation: ko-label-slam .24s ease-out both;
+    }
+    @keyframes ko-label-slam {
+      0% { opacity: 0; transform: scale(1.25); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes ko-screen-life {
+      0%, 72% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .stage-wrap {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      background: #000;
+      border-radius: 12px;
+      border: 1.5px solid #252838;
+      overflow: hidden;
+    }
+
+    .player-title {
+      font-size: 15px;
+      font-weight: 900;
+      color: #ff9f1c;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .btn-group button, .panel button.primary {
+      background: linear-gradient(135deg, #ff9f1c, #ff6f00);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 800;
+      font-size: 12px;
+      cursor: pointer;
+      flex: 1;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .btn-group button:hover, .panel button.primary:hover {
+      background: linear-gradient(135deg, #ffb74d, #ffa000);
+      transform: scale(1.02);
+    }
+    .btn-group button:disabled, .panel button.primary:disabled {
+      background: #2a2c3d;
+      color: #78909c;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #b0bec5;
+    }
+
+    .field input, .field select {
+      background: #121420;
+      border: 1.5px solid #2e3248;
+      border-radius: 7px;
+      color: #fff;
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .field input:focus, .field select:focus {
+      border-color: #ff9f1c;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #eceff1;
+      cursor: pointer;
+    }
+
+    .status-hud {
+      position: absolute;
+      bottom: 8px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid rgba(255, 159, 28, 0.4);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      color: #ffca28;
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .load-progress-widget {
+      display: none !important;
+      position: absolute;
+      bottom: 38px;
+      left: 12px;
+      right: 12px;
+      max-width: 460px;
+      background: rgba(14, 16, 26, 0.94);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1.5px solid rgba(255, 159, 28, 0.55);
+      border-radius: 10px;
+      padding: 7px 12px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.85);
+      z-index: 500;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      box-sizing: border-box;
+      pointer-events: auto;
+    }
+
+    .load-progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      font-weight: 800;
+      color: #ffca28;
+    }
+
+    .load-progress-count {
+      font-size: 11px;
+      color: #80d8ff;
+      font-family: monospace;
+      font-weight: 700;
+    }
+
+    .load-progress-track {
+      width: 100%;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .load-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ff9f1c, #ffd54f, #00e676);
+      border-radius: 3px;
+      transition: width 0.15s ease;
+    }
+
+    .load-current-item {
+      font-size: 10.5px;
+      color: #cfd8dc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: monospace;
+    }
+
+    .load-error-box {
+      font-size: 10px;
+      color: #ff5252;
+      background: rgba(255, 82, 82, 0.14);
+      border: 1px solid rgba(255, 82, 82, 0.45);
+      border-radius: 5px;
+      padding: 4px 6px;
+      max-height: 52px;
+      overflow-y: auto;
+    }
+
+    .load-active-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-height: 70px;
+      overflow-y: auto;
+      font-size: 10px;
+      color: #90a4ae;
+      font-family: monospace;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 5px;
+      padding: 4px 6px;
+    }
+
+    .load-active-item {
+      display: flex;
+      justify-content: space-between;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      gap: 8px;
+    }
+
+    .load-active-item.slow {
+      color: #ffb74d;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="shell">
+    <!-- Left Controls Panel -->
+    <aside class="panel">
+      <div class="player-title">
+        <span>🎬 LUA Animation Studio</span>
+      </div>
+
+      <label class="field">
+        <span>Kịch bản Hoạt ảnh (Script):</span>
+        <select id="scriptSelect"></select>
+      </label>
+      <p class="hint" id="scriptListHint" style="font-size: 11px; color: #78909c; margin: 0;">Đang nạp danh sách...</p>
+
+      <label class="field">
+        <span>Tìm kiếm hoạt ảnh:</span>
+        <input id="scriptFilter" type="search" placeholder="sp0576 / active / tf0009 / standby..." autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span>Đường dẫn (Script Path):</span>
+        <input id="scriptPath" type="text" placeholder="ab_script/attack_sp/..." value="" />
+      </label>
+
+      <label class="field">
+        <span>Ngôn ngữ Voice:</span>
+        <select id="voiceLangSelect">
+          <option value="ja">🇯🇵 Japanese (Tiếng Nhật)</option>
+          <option value="en">🇺🇸 English (Tiếng Anh)</option>
+        </select>
+      </label>
+
+      <div class="btn-group">
+        <button type="button" id="btnOpenScript" class="ghost" style="background:#282a3c; color:#fff;" title="Mở file .lua từ máy">Mở file…</button>
+        <button type="button" id="btnLoad" class="primary">⚡ Nạp Script</button>
+      </div>
+      <input id="scriptFile" type="file" accept=".lua,.txt,text/plain" hidden />
+
+      <div class="btn-group" style="margin-top: 2px;">
+        <button type="button" id="btnPlay" disabled>▶️ Phát</button>
+        <button type="button" id="btnPause" disabled>⏸️ Tạm dừng</button>
+        <button type="button" id="btnStop" disabled>⏹️ Dừng</button>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px;">
+        <label class="check" title="Bỏ qua ảnh khung thẻ 2D cut-in để nạp nhanh hơn"><input type="checkbox" id="turboLite" /> ⚡ Tinh gọn</label>
+        <label class="check"><input type="checkbox" id="highSpeed" /> ⚡ 2x Tốc độ</label>
+        <label class="check"><input type="checkbox" id="loopBank" checked /> 🔁 Lặp lại</label>
+        <label class="check"><input type="checkbox" id="phoneCrop" checked /> 📱 Phone Crop</label>
+        <label class="check" title="Bỏ qua cut-in chỉ xem đòn đánh chính"><input type="checkbox" id="movieMode" /> 🎬 Movie Mode</label>
+        <button type="button" id="btnRecord" disabled style="display:none;">Record</button>
+        <button type="button" id="btnExport" disabled style="display:none;">Export MP4</button>
+        <button type="button" id="btnSplitSheets" disabled style="display:none;">Split sheets</button>
+        <input type="checkbox" id="exportTransforms" style="display:none;" />
+        <input type="checkbox" id="keepAtlasPadding" style="display:none;" />
+      </div>
+
+      <label class="field" style="margin-top: 4px;">
+        <span>Thẻ tấn công (Attacker ID):</span>
+        <input id="attackerCardId" type="number" value="1017631" min="1" step="1" />
+      </label>
+
+      <label class="field">
+        <span>Thẻ đối thủ (Enemy ID):</span>
+        <input id="enemyCardId" type="number" value="1033701" min="1" step="1" />
+      </label>
+
+      <label class="field">
+        <span>Đấu trường (Level BG ID):</span>
+        <input id="levelBgId" type="number" value="1" min="1" step="1" />
+      </label>
+
+      <label class="field">
+        <span>Kết giới (Dokkan Field ID):</span>
+        <input id="dokkanFieldId" type="number" value="0" min="0" step="1" />
+      </label>
+
+      <details style="margin-top: 4px; font-size: 11.5px; color: #b0bec5;">
+        <summary style="cursor: pointer; font-weight: 800; color: #ffca28;">⚖️ Điều kiện kịch bản (Conditions)</summary>
+        <p class="hint" id="conditionHint" style="font-size: 10.5px; color: #78909c; margin: 4px 0;">Cờ điều kiện cho LUA</p>
+        <div id="conditionList" class="condition-list"></div>
+      </details>
+
+      <details style="margin-top: 2px; font-size: 11.5px; color: #b0bec5;">
+        <summary style="cursor: pointer; font-weight: 800; color: #ffca28;">📜 Nhật ký (Log)</summary>
+        <div class="log-actions" style="display:flex; gap:6px; margin: 4px 0;">
+          <button type="button" id="btnCopyLog" class="ghost" style="padding:2px 8px; font-size:10px;">Copy</button>
+          <button type="button" id="btnClearLog" class="ghost" style="padding:2px 8px; font-size:10px;">Clear</button>
+        </div>
+        <pre id="log" class="log" style="font-size: 10px; max-height: 120px; overflow: auto; background: #08090f; padding: 4px; border-radius: 4px; color: #81c784;"></pre>
+      </details>
+    </aside>
+
+    <!-- Right WebGL Stage -->
+    <main class="stage-wrap">
+      <div class="stage-layout">
+        <div class="stage-fit" id="stageFit" data-h="1536" data-phone="0">
+          <div id="stage" class="stage" data-h="1536" data-phone="0">
+            <div id="bgLayer" class="layer layer-bg"></div>
+            <div id="gameLayer" class="layer layer-game">
+              <div id="movieHost" class="movie-host" style="z-index:40"></div>
+              <div id="lwfHost" class="lwf-host"></div>
+              <div id="charaHost" class="chara-host"></div>
+              <canvas id="overlayCanvas" class="overlay" width="852" height="1536" style="z-index:400"></canvas>
+            </div>
+            <div id="uiLayer" class="layer layer-ui">
+              <div id="koOverlay" class="ko-screen" aria-hidden="true"><div class="ko-label">K.O.</div></div>
+              <div id="hud" class="hud">frame 0 · idle</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls on the Right Outside the Stage -->
+        <div class="side-controls" id="floatingBar">
+          <button type="button" id="btnToggleSound" class="side-btn active" title="Bật/Tắt âm thanh">
+            <span id="soundIcon">🔇</span> <span id="soundText">Mute</span>
+          </button>
+          <button type="button" id="btnVoiceLang" class="side-btn" title="Đổi ngôn ngữ lồng tiếng (Voice Language: JP / EN)">
+            <span id="voiceLangIcon">🇯🇵</span> <span id="voiceLangText">JP Voice</span>
+          </button>
+          <button type="button" id="btnMiniPlay" class="side-btn" title="Phát / Tạm dừng">
+            <span id="miniPlayIcon">▶️</span> <span id="miniPlayText">Play</span>
+          </button>
+          <button type="button" id="btnMiniSpeed" class="side-btn" title="Đổi tốc độ 2x">
+            <span id="miniSpeedText" style="color:#80d8ff; font-weight:900;">1x</span> <span>Speed</span>
+          </button>
+          <button type="button" id="btnMiniRepair" class="side-btn" title="Tải đè & sửa lỗi tài nguyên">
+            <span id="miniRepairIcon">🔧</span> <span id="miniRepairText">Repair</span>
+          </button>
+        </div>
+      </div>
+      <div id="loadProgressWidget" class="load-progress-widget" style="display: none;">
+        <div class="load-progress-header">
+          <span id="loadProgressTitle">⏳ Đang tải tài nguyên...</span>
+          <span id="loadProgressCount" class="load-progress-count">0/0 (0%)</span>
+        </div>
+        <div class="load-progress-track">
+          <div id="loadProgressBar" class="load-progress-fill"></div>
+        </div>
+        <div id="loadCurrentItem" class="load-current-item">Khởi tạo...</div>
+        <div id="loadActiveList" class="load-active-list" style="display: none;"></div>
+        <div id="loadErrorBox" class="load-error-box" style="display: none;"></div>
+      </div>
+      <div id="statusBar" class="status-hud">Sẵn sàng</div>
+    </main>
+  </div>
+
+  <script type="module" src="js/app.js?v=dokkan2026_v30"></script>
+
+  <script>
+    // Streamlit Communication Bridge
+    let currentCardId = null;
+    let currentScriptPath = null;
+    let serverPort = 8585;
+    let isCompactMode = false;
+    let targetHeight = 820;
+    let pendingRenderArgs = null;
+    let lastLoadedSignature = null;
+    let lastHostVisible = null;
+
+    function isHostActuallyVisible() {
+      try {
+        const frame = window.frameElement;
+        if (!frame) return !document.hidden;
+        if (!frame.isConnected || frame.getClientRects().length === 0) return false;
+
+        let node = frame;
+        while (node && node !== window.parent.document.documentElement) {
+          const style = window.parent.getComputedStyle(node);
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.contentVisibility === "hidden" ||
+            Number(style.opacity) === 0 ||
+            node.hidden ||
+            node.inert ||
+            node.getAttribute?.("aria-hidden") === "true"
+          ) return false;
+          if (typeof node.checkVisibility === "function" && !node.checkVisibility({
+            checkOpacity: true,
+            checkVisibilityCSS: true,
+          })) return false;
+          node = node.parentElement;
+        }
+
+        const rect = frame.getBoundingClientRect();
+        const viewportHeight = window.parent.innerHeight || 0;
+        const viewportWidth = window.parent.innerWidth || 0;
+        const panel = frame.closest?.('[role="tabpanel"], [data-baseweb="tab-panel"]');
+        if (panel && (
+          panel.hidden || panel.inert || panel.getAttribute('aria-hidden') === 'true' ||
+          window.parent.getComputedStyle(panel).display === 'none'
+        )) return false;
+        return (
+          rect.width > 4 && rect.height > 4 &&
+          rect.bottom > 0 && rect.right > 0 &&
+          rect.top < viewportHeight && rect.left < viewportWidth
+        );
+      } catch (e) {
+        // Components normally share Streamlit's origin. If an embedding setup
+        // prevents parent inspection, preserve the normal eager-load behavior.
+        return !document.hidden;
+      }
+    }
+
+    function dispatchPendingRender() {
+      if (!pendingRenderArgs || !isHostActuallyVisible()) return;
+      const args = pendingRenderArgs;
+      let signature = "";
+      try { signature = JSON.stringify(args); } catch (e) { signature = String(args.script_path || ""); }
+      if (signature === lastLoadedSignature) {
+        pendingRenderArgs = null;
+        return;
+      }
+      pendingRenderArgs = null;
+      lastLoadedSignature = signature;
+      if (typeof window.__DOKKAN_LOAD__ === 'function') {
+        window.__DOKKAN_LOAD__(args.card_id, args.script_path, args);
+      } else {
+        window.__PENDING_ARGS__ = args;
+      }
+    }
+
+    function syncHostVisibility() {
+      const visible = isHostActuallyVisible();
+      if (visible !== lastHostVisible) {
+        lastHostVisible = visible;
+        window.dispatchEvent(
+          new CustomEvent("dokkan-host-visibility", { detail: { visible } })
+        );
+      }
+      if (visible && pendingRenderArgs) {
+        dispatchPendingRender();
+      }
+    }
+
+    function sendHeight() {
+      try {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setFrameHeight",
+          height: targetHeight
+        }, "*");
+      } catch (e) {}
+    }
+
+    function notifyReady() {
+      try {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:componentReady",
+          apiVersion: 1
+        }, "*");
+      } catch (e) {}
+    }
+
+    function onRender(event) {
+      if (!event || !event.data || typeof event.data !== 'object') return;
+      const args = event.data.args;
+      if (!args) return;
+
+      if (args.server_port) {
+        window.__SERVER_PORT__ = args.server_port;
+        serverPort = args.server_port;
+      }
+
+      if (args.voice_language || args.voiceLanguage) {
+        const vLang = args.voice_language || args.voiceLanguage;
+        if (window.__VOICE_LANGUAGE__ && window.__VOICE_LANGUAGE__ !== vLang && typeof window.__DOKKAN_SET_VOICE_LANG__ === 'function') {
+          window.__VOICE_LANGUAGE__ = vLang;
+          window.__DOKKAN_SET_VOICE_LANG__(vLang);
+        } else {
+          window.__VOICE_LANGUAGE__ = vLang;
+        }
+      }
+
+      if (args.compact || args.inline) {
+        isCompactMode = true;
+        document.body.classList.add("compact-mode");
+        targetHeight = Number(args.height) || 400;
+      } else {
+        isCompactMode = false;
+        document.body.classList.remove("compact-mode");
+        targetHeight = 820;
+      }
+
+      currentCardId = args.card_id;
+      currentScriptPath = args.script_path;
+
+      // Streamlit renders hidden tab bodies eagerly. Keep only the lightweight
+      // iframe mounted; loading starts automatically as soon as its tab enters
+      // the viewport. This also prevents revival/movie players losing their
+      // visual decoder while audio continues in a competing hidden player.
+      pendingRenderArgs = args;
+      syncHostVisibility();
+
+      sendHeight();
+    }
+
+    window.addEventListener("message", (event) => {
+      try {
+        if (!event || !event.data || typeof event.data !== 'object') return;
+        if (event.data.type === "streamlit:render") {
+          onRender(event);
+        } else if (event.data.type === "dokkan:control") {
+          const { action, speed, muted, lang } = event.data;
+          if (action === "togglePlay") {
+            document.getElementById('btnMiniPlay')?.click();
+          } else if ((action === "play" || action === "pause") && typeof window.__DOKKAN_PLAYER_CONTROL__ === "function") {
+            window.__DOKKAN_PLAYER_CONTROL__(action);
+          } else if (action === "seek" && Number.isFinite(Number(event.data.frame)) && typeof window.__DOKKAN_SEEK_FRAME__ === "function") {
+            window.__DOKKAN_SEEK_FRAME__(Number(event.data.frame), Boolean(event.data.playAfterSeek));
+          } else if (action === "toggleSpeed") {
+            document.getElementById('btnMiniSpeed')?.click();
+          } else if (action === "toggleSound") {
+            document.getElementById('btnToggleSound')?.click();
+          } else if (action === "setVoiceLang" && lang && typeof window.__DOKKAN_SET_VOICE_LANG__ === "function") {
+            window.__DOKKAN_SET_VOICE_LANG__(lang);
+          } else if ((action === "setKo" || action === "toggleKo") && typeof window.__DOKKAN_SET_KO__ === "function") {
+            window.__DOKKAN_SET_KO__(event.data.enabled);
+          }
+        }
+      } catch (e) {}
+    });
+
+    // Notify Streamlit that component is ready immediately
+    notifyReady();
+
+    window.addEventListener("load", () => {
+      notifyReady();
+      setTimeout(sendHeight, 40);
+      setTimeout(syncHostVisibility, 0);
+
+      // Auto-load from URL query parameters when embedded in React or opened directly
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const elementColor = p.get("element_color");
+        if (elementColor && /^#[0-9a-fA-F]{6}$/.test(elementColor)) {
+          document.documentElement.style.setProperty('--element-color', elementColor);
+          document.documentElement.style.setProperty('--element-glow', `${elementColor}77`);
+        }
+        const qScript = p.get("script") || p.get("script_path") || p.get("path");
+        const qCard = Number(p.get("card") || p.get("card_id") || p.get("id"));
+        const qPort = Number(p.get("server_port") || p.get("port")) || 8585;
+        const qEnemy = Number(p.get("enemy_card_id") || p.get("enemy")) || 1033701;
+        const qKo = p.get("ko") === "1" || p.get("ko_preview") === "1" || p.get("ko_screen") === "1";
+        if (qScript || qCard) {
+          onRender({
+            data: {
+              type: "streamlit:render",
+              args: {
+                card_id: qCard,
+                script_path: qScript,
+                server_port: qPort,
+                enemy_card_id: qEnemy,
+                ko_preview: qKo,
+                compact: p.get("compact") === "1" || p.get("inline") === "1",
+                voice_language: p.get("lang") || "ja",
+                high_speed: p.get("fast") === "1",
+                muted: p.get("muted") === "1"
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.error("Auto load error:", e);
+      }
+    });
+
+    // Tab changes do not emit a browser visibility event, so watch the host
+    // iframe cheaply. No animation asset work is performed by this timer.
+    window.setInterval(syncHostVisibility, 500);
+  </script>
+</body>
+</html>
