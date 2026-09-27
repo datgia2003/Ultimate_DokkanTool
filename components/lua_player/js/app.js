@@ -1694,7 +1694,10 @@ window.__DOKKAN_LOAD__ = async function (cardId, scriptPath, opts = {}) {
   const wantVoiceLang = opts.voice_language || opts.voiceLanguage || window.__VOICE_LANGUAGE__ || 'ja';
   updateVoiceLanguageUI(wantVoiceLang);
   try {
-    await loadAndBind();
+    // Timeline drafts reuse one preview filename. A new render revision means
+    // the server-side Lua file was overwritten and must bypass the iframe's
+    // opened-script/fetch cache before rebinding visuals and audio.
+    await loadAndBind({ forceFresh: opts.render_revision != null && Number(opts.render_revision) > 0 });
   } catch (err) {
     log(`Load error: ${err.message || err}`);
   } finally {

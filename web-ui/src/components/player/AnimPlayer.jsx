@@ -213,6 +213,10 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
           args: {
             card_id: renderCardId,
             script_path: script,
+            // The merged Lua draft overwrites a stable preview path. Include
+            // its revision so the iframe bridge doesn't deduplicate a fresh
+            // render just because the filename stayed the same.
+            render_revision: editorMode ? (displayedAnim?.preview_revision || 0) : 0,
             server_port: 8585,
             enemy_card_id: Number(enemyId) || 1033701,
             ko_preview: effectiveKoScreen,
@@ -330,7 +334,7 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
   useEffect(() => {
     triggerRender()
     setIsPlaying(true)
-  }, [enemyId, script, renderCardId, editorMode])
+  }, [enemyId, script, renderCardId, editorMode, displayedAnim?.preview_revision])
 
   useEffect(() => {
     const detail = script ? {
