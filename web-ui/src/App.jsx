@@ -363,7 +363,7 @@ export function App() {
       />
 
       {/* Main Workspace */}
-      <main className="workspace-container">
+      <main className={`workspace-container ${card ? 'character-edit-workspace' : ''}`}>
         <div className={`app-global-ost-row ${!card && activeTab !== 'lua-studio' ? 'listening-room' : ''}`}>
           <BgmPlayer accent={accent} language={language} onImportCustomBgm={handleImportCustomBgm} immersive={!card && activeTab !== 'lua-studio'} />
         </div>

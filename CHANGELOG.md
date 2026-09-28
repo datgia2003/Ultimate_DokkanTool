@@ -2,6 +2,13 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.2.3] - 2026-09-28
+
+### Cải thiện giao diện và sửa lỗi
+
+- Đặt thanh OST chung cùng hàng với thanh tiêu đề và nút Revert khi đang chỉnh sửa thẻ; tự chuyển bố cục trên màn hình hẹp.
+- Sửa lỗi Lua Timeline bị màn hình đen khi đổi rarity hoặc kiểu tìm kiếm sau khi chọn thẻ để nhập animation.
+
 ## [1.0.2.1] - 2026-09-28
 
 ### Sửa lỗi cắt và nối Lua Timeline

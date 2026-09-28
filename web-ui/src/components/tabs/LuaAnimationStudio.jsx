@@ -414,8 +414,8 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       <header><Search size={15} /><strong>{vi ? 'Tìm Lua từ animation trong database' : 'Find Lua from database animations'}</strong><span>{vi ? 'Mọi loại animation' : 'All animation types'}</span></header>
       <div className="lua-animation-search-controls">
         <input value={searchQuery} onChange={event => { setSearchQuery(event.target.value); setSearchPage(1); setSelectedSourceCard(null); setSourceAnimations([]) }} placeholder={vi ? 'Tìm thẻ theo tên, ID hoặc tên chiêu' : 'Search by card name, card ID, or move name'} />
-        <AnimationSearchFilter source language={language} value={searchBy} onChange={value => { setSearchBy(value); setSearchPage(1); setSelectedSourceCard(null) }} />
-        <AnimationRarityFilter language={language} value={rarity} onChange={value => { setRarity(value); setSearchPage(1); setSelectedSourceCard(null) }} />
+        <AnimationSearchFilter source language={language} value={searchBy} onChange={value => { setSearchBy(value); setSearchPage(1); setSelectedSourceCard(null); setSourceAnimations([]); setLoadingSourceAnimations(false) }} />
+        <AnimationRarityFilter language={language} value={rarity} onChange={value => { setRarity(value); setSearchPage(1); setSelectedSourceCard(null); setSourceAnimations([]); setLoadingSourceAnimations(false) }} />
       </div>
       <div className="lua-animation-browser-grid">
         <div className="lua-animation-source-list">
@@ -433,7 +433,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
             {selectedSourceCard && <span>{loadingSourceAnimations ? (vi ? 'Đang tải…' : 'Loading…') : `${visibleSourceAnimations.length} ${vi ? 'animation' : 'animations'}`}</span>}
           </div>
           {selectedSourceCard && !loadingSourceAnimations && visibleSourceAnimations.length === 0 && <p className="lua-browser-hint">{vi ? 'Không có animation phù hợp cho thẻ này.' : 'No matching animations are available for this card.'}</p>}
-          {visibleSourceAnimations.map((animation, index) => {
+          {selectedSourceCard && visibleSourceAnimations.map((animation, index) => {
             const path = animation.script_path || (animation.folder && animation.script_name ? `ab_script/${animation.folder}/${animation.script_name.replace(/\.lua$/i, '')}.lua` : '')
             const importing = importingScriptPath === path
             return <div className="lua-animation-result" key={`${path || animation.name}-${index}`}>
