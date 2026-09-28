@@ -1795,6 +1795,9 @@ export class ActionBankRunner {
       case 'setVoiceVolume':
         this.audio?.setVoiceVolume(cmd.cueId, cmd.vol);
         break;
+      case 'stopVoice':
+        this.audio?.stopVoice?.(cmd.args?.[1]);
+        break;
       case 'setPhase':
         this.phase = Number(cmd.phase) || 0;
         break;
@@ -2004,7 +2007,7 @@ export class ActionBankRunner {
     let stretch = meta.stretch;
     if (stretch == null || !Number.isFinite(Number(stretch)) || Number(stretch) <= 0) {
       if (this.highSpeed) {
-        const auto = this._currentAutoTimeScale();
+        const auto = cmd.autoTimeScale ?? this._currentAutoTimeScale();
         stretch = auto > 0 ? auto : 1;
       } else {
         stretch = 1;
@@ -2227,6 +2230,12 @@ export class ActionBankRunner {
       player.parentScaleY = 1;
     }
     this.lwf?.activatePlayer?.(player);
+
+    // Cropped effects can start before zero to preserve their progress at IN.
+    // Seek only this player so other clips keep their current movie position.
+    if (Number(cmd.frame) < 0) {
+      this.lwf?.seekPlayerToAbFrame?.(player, this.frame, FPS);
+    }
 
     this._applyDueEffKeys(cmd.workId, Number(cmd.frame) || 0);
     this.lwf?.syncFollowParents?.(this.chara);

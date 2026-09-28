@@ -333,6 +333,18 @@ export class AudioBus {
     this._sources.delete(live.src);
     this.voices.delete(Number(workId));
   }
+  stopVoice(cueId) {
+    const key = `v:${Number(cueId)}`;
+    const live = this.voices.get(key);
+    if (!live?.src) return;
+    try {
+      live.src.stop(0);
+      live.src.disconnect();
+    } catch {
+    }
+    this._sources.delete(live.src);
+    this.voices.delete(key);
+  }
   async preloadSe(cueId) {
     const patch = getActivePatchId() || '';
     return this._load(`/api/se?cue=${encodeURIComponent(cueId)}`, `se:${cueId}:${patch}`);

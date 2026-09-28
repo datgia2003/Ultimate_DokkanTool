@@ -151,6 +151,11 @@ export function installBinders(host, bank) {
   if (!(bank.effectTexRules instanceof Map)) bank.effectTexRules = new Map();
 
   const push = (cmd) => {
+    // Capture the scale when this sound is queued. A later clip may use the
+    // same phase with a different scale; it must not retime earlier sounds.
+    if (cmd.type === 'playSe' || cmd.type === 'playSeLife' || cmd.type === 'playSeVer2') {
+      cmd.autoTimeScale = bank.autoTimeScales.get(Number(bank.phase ?? 0)) ?? null;
+    }
     bank.commands.push(cmd);
     return cmd;
   };

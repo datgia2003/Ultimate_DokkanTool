@@ -4,233 +4,7 @@ import { Clapperboard, FileCode2, FolderPlus, Play, Pause, Scissors, Save, Trash
 import { AnimationChoice } from '../common/AnimationChoice'
 import { AnimationSearchFilter, AnimationRarityFilter, AnimationPagination } from '../common/AnimationBrowserControls'
 
-const TIMED_CALLS = new Set([
-  'setDisp', 'changeAnime', 'changeAnimeAndStop', 'changeAnimeBySide', 'setAnimeLoop', 'setMoveKey', 'setScaleKey', 'setRotateKey', 'setAlphaKey', 'setBlendColor', 'setDrawFront', 'setEnableAura', 'setBgGaussBlurKey', 'setBgScroll',
-  'setEffAlphaKey', 'setEffColorKey', 'setEffMoveKey', 'setEffRotateKey', 'setEffScaleKey', 'setEffReplaceTexture', 'setEffShake', 'setLastPosKey',
-  'setEffBlendColor', 'setEffReplaceTextureByCardId', 'setEffReplaceTextureByFilename', 'setEnableAutoXFlip', 'removeAllEffect', 'entryEffectAwaken', 'entryEffectTraining',
-  'setQuake', 'setShake', 'setShakeChara', 'setSeVolume', 'setSeVolumeByWorkId', 'setVoiceVolume', 'setZanzou', 'setZanzouColor', 'setZanzouSpeed', 'setDamage', 'entryCharaView',
-  'setGaussBlurKey', 'endPhase', 'entryFade', 'entryFadeBg',
-  'entryEffect', 'entryEffectLife', 'entryEffectUnpausable', 'playSe', 'playSeLife', 'playSeVer2', 'stopSe', 'stopSeQueueId', 'stopSeIfDoubleSpeed', 'playVoice', 'pauseMovie', 'setupMovie',
-  'gotoPhase', 'pauseAll', 'delayAll', 'pauseChara', 'delayChara',
-  'setVisibleUI', 'adjustAttackerLabel', 'adjustEnemyLabel', 'fadeKoLabel', 'entryKakimoji', 'entryFlash', 'entryFlashBg', 'removeAllFade', 'removeAllFadeBg', 'wipeIn', 'wipeOut', 'wipeInOut', 'changeBgm', 'setEnvZoomEnable',
-  'setBgMoveKey', 'setBgScaleKey', 'setBgRotateKey', 'setBgBlendColor', 'setScreenOffset', 'setShakeXY', 'setShakeKey', 'startBgScroll', 'stopBgScroll', 'visibleMovie', 'scaleMovie', 'setBandpassFilter'
-])
-const SHARED_LUA_GLOBALS = new Set(['fcolor_r', 'fcolor_g', 'fcolor_b', 'multi_frm', 'OFFSET_X', 'OFFSET_Y', '_IS_PLAYER_SIDE_', '_IS_DEAD_', '_IS_DEAD_LAST_'])
-const TARGETS = [
-  ['active_skill', 'Active Skill', 'Kỹ năng chủ động'], ['attack_sp', 'Super Attack', 'Siêu tấn công'],
-  ['passive_skill_effect', 'Passive / Transform', 'Passive / Biến hình'], ['standby_skill', 'Standby', 'Standby'],
-  ['finish_skill', 'Finish', 'Đòn kết liễu'], ['revival', 'Revival', 'Hồi sinh'], ['preview_fx', 'Preview FX', 'Preview FX']
-]
-
-function evaluateFrameExpression(expression, variables) {
-  const tokens = []
-  const source = String(expression || '').trim()
-  const tokenPattern = /\s*(\d+(?:\.\d+)?|[A-Za-z_]\w*|[()+*/-])/gy
-  let position = 0
-  while (position < source.length) {
-    tokenPattern.lastIndex = position
-    const match = tokenPattern.exec(source)
-    if (!match) return null
-    tokens.push(match[1])
-    position = tokenPattern.lastIndex
-  }
-  let cursor = 0
-  const primary = () => {
-    const token = tokens[cursor++]
-    if (token === '(') {
-      const value = sum()
-      if (tokens[cursor++] !== ')') throw new Error('unclosed expression')
-      return value
-    }
-    if (token === '+' || token === '-') {
-      const value = primary()
-      return token === '-' ? -value : value
-    }
-    if (/^\d/.test(token || '')) return Number(token)
-    if (token && Object.hasOwn(variables, token)) return variables[token]
-    throw new Error('unknown frame value')
-  }
-  const product = () => {
-    let value = primary()
-    while (tokens[cursor] === '*' || tokens[cursor] === '/') {
-      const operator = tokens[cursor++]
-      const right = primary()
-      value = operator === '*' ? value * right : value / right
-    }
-    return value
-  }
-  const sum = () => {
-    let value = product()
-    while (tokens[cursor] === '+' || tokens[cursor] === '-') {
-      const operator = tokens[cursor++]
-      const right = product()
-      value = operator === '+' ? value + right : value - right
-    }
-    return value
-  }
-  try {
-    const value = sum()
-    return cursor === tokens.length && Number.isFinite(value) ? value : null
-  } catch { return null }
-}
-
-function luaCallArguments(line) {
-  const open = line.indexOf('(')
-  if (open < 0) return []
-  const args = []
-  let depth = 0
-  let start = open + 1
-  let quote = ''
-  let escaped = false
-  for (let index = open + 1; index < line.length; index += 1) {
-    const char = line[index]
-    if (quote) {
-      if (escaped) escaped = false
-      else if (char === '\\') escaped = true
-      else if (char === quote) quote = ''
-      continue
-    }
-    if (char === '"' || char === "'") { quote = char; continue }
-    if (char === '(') depth += 1
-    else if (char === ')') {
-      if (depth === 0) {
-        const last = line.slice(start, index).trim()
-        if (last || args.length) args.push(last)
-        return args
-      }
-      depth -= 1
-    } else if (char === ',' && depth === 0) {
-      args.push(line.slice(start, index).trim())
-      start = index + 1
-    }
-  }
-  return []
-}
-
-function getFrameVariables(lines) {
-  const expressions = []
-  const variables = Object.create(null)
-  for (const line of lines) {
-    const assignment = /^\s*([A-Za-z_]\w*)\s*=\s*(.*?)\s*;?\s*(?:--.*)?$/.exec(line)
-    if (assignment) expressions.push([assignment[1], assignment[2]])
-  }
-  for (let pass = 0; pass < expressions.length + 1; pass += 1) {
-    let changed = false
-    for (const [name, expression] of expressions) {
-      const value = evaluateFrameExpression(expression, variables)
-      if (value == null || variables[name] === value) continue
-      variables[name] = value
-      changed = true
-    }
-    if (!changed) break
-  }
-  return variables
-}
-
-function inspectScript(content) {
-  const lines = String(content || '').split(/\r?\n/)
-  const cues = []
-  const unmapped = []
-  const variables = getFrameVariables(lines)
-  lines.forEach((text, lineIndex) => {
-    const trimmed = text.trim()
-    if (!trimmed || trimmed.startsWith('--')) return
-    const call = /^\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text)
-    if (!call) return
-    const name = call[1].split('.').pop()
-    const args = luaCallArguments(text)
-    // These metadata calls are keyed by work ID, not timeline frame.
-    const isTimed = TIMED_CALLS.has(name) || (name === 'setPitch' && args.length >= 3)
-    if (!isTimed) return
-    const match = /^\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(\s*([^,]+),/.exec(text)
-    const frame = match && evaluateFrameExpression(match[2], variables)
-    if (match && frame != null) cues.push({ frame, name: match[1], lineIndex, text })
-    else unmapped.push({ lineIndex, text })
-  })
-  return { lines, cues, unmapped, maxFrame: Math.max(1, ...cues.map(cue => cue.frame)) }
-}
-
-function rewriteFrame(line, frame) {
-  return line.replace(/^(\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\(\s*)[^,]+(,)/, (_match, before, comma) => `${before}${Math.max(0, Math.round(frame))}${comma}`)
-}
-
-function scriptGlobals(lines) {
-  const names = new Set()
-  for (const line of lines) {
-    const assignment = /^\s*((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)\s*=(?!=)/.exec(line)
-    if (assignment && !/^\s*local\b/.test(line)) {
-      assignment[1].split(',').forEach(name => {
-        const normalized = name.trim()
-        if (normalized && !SHARED_LUA_GLOBALS.has(normalized)) names.add(normalized)
-      })
-    }
-    const fn = /^\s*function\s+([A-Za-z_]\w*)\s*\(/.exec(line)
-    if (fn && !SHARED_LUA_GLOBALS.has(fn[1])) names.add(fn[1])
-  }
-  return names
-}
-
-function namespaceGlobals(lines, clipIndex) {
-  const globals = scriptGlobals(lines)
-  if (!globals.size) return lines
-  const prefix = `__lua_clip_${clipIndex}_`
-  const token = /(--[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_]\w*)/g
-  return lines.map(line => line.replace(token, (value, match, offset) => {
-    if (!match || match.startsWith('--') || match.startsWith('"') || match.startsWith("'")) return value
-    if (offset > 0 && line[offset - 1] === '.') return value
-    return globals.has(match) ? `${prefix}${match}` : value
-  }))
-}
-
-function joinClips(clips) {
-  const ordered = [...clips].sort((a, b) => a.startFrame - b.startFrame)
-  return ordered.map((clip, clipIndex) => {
-    const { lines, cues } = inspectScript(clip.content)
-    const variables = getFrameVariables(lines)
-    const cueByLine = new Map(cues.map(cue => [cue.lineIndex, cue]))
-    const output = []
-    lines.forEach((line, lineIndex) => {
-      const cue = cueByLine.get(lineIndex)
-      if (!cue) {
-        const skip = /^(\s*skipFrame\s*\(\s*[^,]+,\s*)([^,)]+)(.*)$/.exec(line)
-        if (skip) {
-          const localTarget = evaluateFrameExpression(skip[2], variables)
-          if (localTarget != null) {
-            const offset = clip.startFrame - clip.inFrame
-            output.push(`${skip[1]}${Math.max(0, Math.round(localTarget + offset))}${skip[3]}`)
-            return
-          }
-        }
-        output.push(line)
-        return
-      }
-      if (cue.frame < clip.inFrame || cue.frame > clip.outFrame) return
-      // Each original file ends its own battle phase. Keep only the final
-      // endPhase, otherwise the first clip terminates the whole merged preview.
-      if (cue.name.split('.').pop() === 'endPhase' && clipIndex < ordered.length - 1) return
-      const timelineFrame = clip.startFrame + cue.frame - clip.inFrame
-      let rewritten = rewriteFrame(line, timelineFrame)
-      // playSeVer2's fourth argument is an absolute stop frame. Keep it on
-      // the same timeline as its start or the audio can be cut off early.
-      if (cue.name.split('.').pop() === 'playSeVer2') {
-        const argsMatch = /^(\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\()([\s\S]*)(\)\s*;?\s*(?:--.*)?)$/.exec(rewritten)
-        if (argsMatch) {
-          const args = argsMatch[2].split(',')
-          if (args.length >= 4) {
-            const localEnd = evaluateFrameExpression(args[3], variables)
-            if (localEnd != null && localEnd > 0) {
-              args[3] = String(Math.max(0, Math.round(clip.startFrame + localEnd - clip.inFrame)))
-              rewritten = `${argsMatch[1]}${args.join(',')}${argsMatch[3]}`
-            }
-          }
-        }
-      }
-      output.push(rewritten)
-    })
-    const namespaced = namespaceGlobals(output, clipIndex + 1)
-    return `-- ===== ${clip.name} · timeline start ${clip.startFrame}f · source frames ${clip.inFrame}-${clip.outFrame} =====\ndo\n${namespaced.join('\n')}\nend`
-  }).join('\n\n')
-}
+import { inspectScript, joinClips, CUSTOM_LUA_FORMATS, customLuaFilename, canPlaceCustomDamage, prepareCustomLua } from './luaTimeline'
 
 export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
   const vi = language !== 'en'
@@ -242,8 +16,13 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   const [syncedFrame, setSyncedFrame] = useState(null)
   const [playerMaxFrame, setPlayerMaxFrame] = useState(0)
   const [playerIsPlaying, setPlayerIsPlaying] = useState(true)
+  const [pausedPlayerFrame, setPausedPlayerFrame] = useState(null)
   const [filename, setFilename] = useState('custom_animation')
   const [target, setTarget] = useState('attack_sp')
+  const [damageEnabled, setDamageEnabled] = useState(false)
+  const [removeDamageEnabled, setRemoveDamageEnabled] = useState(false)
+  const [damageFrame, setDamageFrame] = useState(0)
+  const [mergeError, setMergeError] = useState('')
   const [busy, setBusy] = useState(false)
   const [autoPreviewing, setAutoPreviewing] = useState(false)
   const [autoPreviewError, setAutoPreviewError] = useState('')
@@ -355,15 +134,40 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   const totalFrames = Math.max(1, ...clips.map(clip => clip.startFrame + Math.max(1, clip.outFrame - clip.inFrame + 1)))
   const timelineWidth = Math.max(760, Math.min(5000, totalFrames * 1.4))
   const visibleFrame = Math.max(0, Math.min(totalFrames, syncedFrame == null ? playhead : syncedFrame))
+  const damageAvailable = canPlaceCustomDamage(target, filename)
+  const preparedExport = useMemo(() => {
+    try {
+      return prepareCustomLua(composedDraft, { target, filename, damageEnabled, damageFrame, removeDamageEnabled })
+    } catch (error) {
+      return { content: '', error: error.message }
+    }
+  }, [composedDraft, target, filename, damageEnabled, damageFrame, removeDamageEnabled])
+  const exportFolder = CUSTOM_LUA_FORMATS.find(format => format.id === target)?.folder || target
+  const exportError = mergeError || preparedExport.error
   useEffect(() => {
-    const content = joinClips(clips)
-    setComposedDraft(content)
-    setAutoPreviewError('')
+    if (!damageAvailable) setDamageEnabled(false)
+  }, [damageAvailable])
+  const composedInfo = useMemo(() => inspectScript(composedDraft), [composedDraft])
+  const damageMaxFrame = Math.max(0, ...composedInfo.cues.filter(cue => cue.name === 'endPhase').map(cue => cue.frame)) || composedInfo.maxFrame
+  useEffect(() => {
+    try {
+      setComposedDraft(joinClips(clips))
+      setMergeError('')
+    } catch (error) {
+      setComposedDraft('')
+      setMergeError(error.message)
+    }
+  }, [clips])
+
+  useEffect(() => {
+    const content = preparedExport.content
+    const revision = ++previewRevisionRef.current
+    setAutoPreviewError(exportError || '')
+    if (exportError) { setAutoPreviewing(false); return }
     if (!clips.length || !editorMode || !card?.id || !content.trim()) {
       setAutoPreviewing(false)
       return
     }
-    const revision = ++previewRevisionRef.current
     setAutoPreviewing(true)
     const timer = setTimeout(async () => {
       try {
@@ -372,7 +176,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
         if (revision !== previewRevisionRef.current) return
         onTimelinePlay?.({ id: Date.now(), sequence: [] })
         onPreviewChange?.({
-          title: `${filename || 'custom_animation'} · Preview`, name: saved.filename,
+          title: `${preparedExport.filename} · Preview`, name: saved.filename,
           type: vi ? 'Lua Timeline Draft' : 'Lua Timeline Draft', card_id: card.id,
           card_name: card.name, element: card.element,
           preview_revision: revision,
@@ -389,7 +193,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       clearTimeout(timer)
       previewRevisionRef.current += 1
     }
-  }, [clips, editorMode, card?.id])
+  }, [preparedExport.content, preparedExport.filename, exportError, editorMode, card?.id])
   const currentCues = useMemo(() => clips.flatMap(clip => {
     const { cues } = inspectScript(clip.content)
     return cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame)
@@ -410,15 +214,18 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   useEffect(() => {
     setSyncedFrame(null)
     setPlayhead(0)
+    setPausedPlayerFrame(null)
   }, [card?.id])
 
   useEffect(() => {
     const onFrame = event => {
       const detail = event.detail || {}
       const expectedCardId = editorMode ? (previewAnimation?.card_id || card?.id) : card?.id
-      if ((editorMode && !followPlayer) || (!editorMode && Number(detail.cardId) !== Number(expectedCardId))) return
+      if (Number(detail.cardId) !== Number(expectedCardId)) return
       setPlayerIsPlaying(Boolean(detail.playing))
+      setPausedPlayerFrame(detail.playing ? null : Math.max(0, Math.round(Number(detail.frame) || 0)))
       if (Number(detail.maxFrame) > 0) setPlayerMaxFrame(Number(detail.maxFrame))
+      if (editorMode && !followPlayer) return
       if (!editorMode && detail.playing) {
         setSyncedFrame(previous => previous == null ? previous : null)
         return
@@ -508,12 +315,12 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   }
 
   const saveScript = async () => {
-    if (!clips.length || !composedDraft.trim() || !card?.id) return
+    if (!clips.length || !preparedExport.content?.trim() || exportError || !card?.id || busy) return
     setBusy(true); setMessage('')
     try {
-      const saved = await api.saveCustomLua(filename, composedDraft)
-      const archivePath = `lua/ab_script/${target}/${saved.filename}`
-      onStageSaved?.({ source_path: saved.source_path, archive_path: archivePath, filename: saved.filename, target })
+      const saved = await api.saveCustomLua(preparedExport.filename, preparedExport.content)
+      const archivePath = `lua/ab_script/${preparedExport.folder}/${saved.filename}`
+      onStageSaved?.({ source_path: saved.source_path, archive_path: archivePath, filename: saved.filename, target: preparedExport.folder, format: target })
       setMessage(vi ? `Đã lưu ${saved.filename} vào game res/ab_script/custom_lua và thêm vào patch của thẻ #${card.id}.` : `Saved ${saved.filename} under game res/ab_script/custom_lua and staged it in card #${card.id}'s patch.`)
     } catch (error) {
       setMessage(error.message || (vi ? 'Không thể lưu Lua.' : 'Could not save Lua.'))
@@ -521,15 +328,15 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   }
 
   const previewScript = async () => {
-    if (!clips.length || !composedDraft.trim() || !card?.id || busy) return
+    if (!clips.length || !preparedExport.content?.trim() || exportError || !card?.id || busy) return
     previewRevisionRef.current += 1
     setAutoPreviewing(false)
     setBusy(true); setMessage('')
     try {
-      const saved = await api.previewCustomLua(`timeline_${card.id}_draft`, composedDraft)
+      const saved = await api.previewCustomLua(`timeline_${card.id}_draft`, preparedExport.content)
       onTimelinePlay?.({ id: Date.now(), sequence: [] })
       onPreviewChange?.({
-        title: `${filename || 'custom_animation'} · Preview`,
+        title: `${preparedExport.filename} · Preview`,
         name: saved.filename,
         type: vi ? 'Lua Timeline Draft' : 'Lua Timeline Draft',
         card_id: card.id,
@@ -544,6 +351,18 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     } finally { setBusy(false) }
   }
 
+  const changeFormat = nextTarget => {
+    const nextFilename = nextTarget === 'active_ultimate' ? customLuaFilename(nextTarget, filename) : filename
+    setTarget(nextTarget)
+    setFilename(nextFilename)
+    if (!canPlaceCustomDamage(nextTarget, nextFilename)) setDamageEnabled(false)
+  }
+
+  const captureDamageFrame = () => {
+    if (!damageAvailable || !damageEnabled || removeDamageEnabled || playerIsPlaying || pausedPlayerFrame == null) return
+    setDamageFrame(pausedPlayerFrame)
+  }
+
   return <section className="lua-studio-page">
     <header className="lua-studio-header">
       <div className="lua-studio-title"><span><Clapperboard size={20} /></span><div><h2>{vi ? 'Lua Animation Timeline' : 'Lua Animation Timeline'}</h2><p>{editorMode ? (vi ? 'Tìm animation, tải Lua, cắt ghép và xem thử script đã chỉnh.' : 'Search animations, fetch Lua, edit the timeline and preview your script.') : (vi ? 'Theo dõi script Lua theo animation đang phát ở player.' : 'Follow the Lua script for the animation playing in the player.')}</p></div></div>
@@ -552,7 +371,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
         {editorMode && <>
           <input ref={fileRef} type="file" accept=".lua,text/plain" multiple hidden onChange={event => { void importFiles(event.target.files || []); event.target.value = '' }} />
           <button type="button" className="lua-action secondary" onClick={() => fileRef.current?.click()}><FolderPlus size={15} />{vi ? 'Thêm Lua' : 'Import Lua'}</button>
-          <button type="button" className="lua-action primary" onClick={() => void saveScript()} disabled={!clips.length || !composedDraft.trim() || busy || !card?.id}><Save size={15} />{busy ? (vi ? 'Đang lưu…' : 'Saving…') : (vi ? 'Lưu anim custom' : 'Save custom animation')}</button>
+          <button type="button" className="lua-action primary" onClick={() => void saveScript()} disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !card?.id}><Save size={15} />{busy ? (vi ? 'Đang lưu…' : 'Saving…') : (vi ? 'Lưu anim custom' : 'Save custom animation')}</button>
         </>}
         {editorMode && onNavigateBack && <button type="button" className="lua-action quiet" onClick={onNavigateBack}>{vi ? 'Quay lại' : 'Back'}</button>}
       </div>
@@ -616,8 +435,19 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       <button type="button" className="lua-action secondary" disabled={!previewAnimation?.script_path} onClick={() => window.dispatchEvent(new CustomEvent('dokkan:anim-player-control', { detail: { action: playerIsPlaying ? 'pause' : 'play' } }))}>{playerIsPlaying ? <Pause size={14} /> : <Play size={14} />}{playerIsPlaying ? (vi ? 'Tạm dừng player' : 'Pause player') : (vi ? 'Phát player' : 'Play player')}</button>
       <button type="button" className={`lua-action secondary ${followPlayer ? 'selected' : ''}`} onClick={() => { setFollowPlayer(value => !value); setSyncedFrame(null) }}><Radio size={14} />{vi ? 'Theo player' : 'Follow player'}</button>
       <button type="button" className="lua-action secondary" disabled={!selected} onClick={splitSelected}><Scissors size={14} />{vi ? 'Cắt tại playhead' : 'Split at playhead'}</button>
-      <button type="button" className="lua-action secondary" disabled={!clips.length || !composedDraft.trim() || busy || !card?.id} onClick={() => void previewScript()}><MonitorPlay size={14} />{busy ? (vi ? 'Đang nạp script…' : 'Loading script…') : (vi ? 'Nạp script ghép vào player' : 'Load merged script in player')}</button>
+      <button type="button" className="lua-action secondary" disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !card?.id} onClick={() => void previewScript()}><MonitorPlay size={14} />{busy ? (vi ? 'Đang nạp script…' : 'Loading script…') : (vi ? 'Nạp script ghép vào player' : 'Load merged script in player')}</button>
       <span className="lua-frame-readout"><Clock3 size={14} />{Math.round(visibleFrame)} / {totalFrames}f</span>
+      <div className="lua-damage-controls lua-damage-toolbar">
+        <label className="lua-damage-check"><input type="checkbox" checked={removeDamageEnabled} onChange={event => { setRemoveDamageEnabled(event.target.checked); if (event.target.checked) setDamageEnabled(false) }} /><span>{vi ? 'Bỏ dealDamage' : 'Remove dealDamage'}</span></label>
+        <label className="lua-damage-check"><input type="checkbox" checked={damageEnabled && damageAvailable} disabled={!damageAvailable || removeDamageEnabled} onChange={event => {
+          setDamageEnabled(event.target.checked)
+          if (event.target.checked) setDamageFrame(!playerIsPlaying && pausedPlayerFrame != null ? pausedPlayerFrame : Math.round(visibleFrame))
+        }} /><span>{vi ? 'Đặt damage' : 'Set damage'}</span></label>
+        <div className="lua-damage-frame">
+          <label><span>{vi ? 'Frame' : 'Frame'}</span><input type="number" min="0" max={damageMaxFrame} step="1" value={damageFrame} disabled={!damageAvailable || !damageEnabled || removeDamageEnabled} onChange={event => setDamageFrame(event.target.value === '' ? '' : Number(event.target.value))} /></label>
+          <button type="button" className="lua-action secondary" disabled={!damageAvailable || !damageEnabled || removeDamageEnabled || playerIsPlaying || pausedPlayerFrame == null} onClick={captureDamageFrame}><Pause size={14} />{vi ? `Lấy frame${pausedPlayerFrame == null ? '' : ` (${pausedPlayerFrame}f)`}` : `Use paused${pausedPlayerFrame == null ? '' : ` (${pausedPlayerFrame}f)`}`}</button>
+        </div>
+      </div>
     </div>}
 
     {editorMode && (!clips.length ? <div className="lua-studio-empty"><FileCode2 size={31} /><strong>{vi ? 'Nhập một hoặc nhiều file Lua để bắt đầu' : 'Import one or more Lua files to begin'}</strong><span>{vi ? 'Các lệnh theo frame sẽ hiện thành điểm đánh dấu trên timeline.' : 'Frame calls will appear as markers on the timeline.'}</span></div> : <>
@@ -631,7 +461,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
             <div className="lua-track-viewport" onScroll={syncTimelineScroll}><div className="lua-track-canvas" style={{ width: timelineWidth }}>
               <div className="lua-track-grid">{Array.from({ length: Math.ceil(totalFrames / 60) + 1 }, (_, i) => <i key={i} style={{ left: `${(i * 60 / totalFrames) * 100}%` }} />)}</div>
               <div className="lua-clip-block" style={{ left: `${(clip.startFrame / totalFrames) * 100}%`, width: `${Math.max(2, (duration / totalFrames) * 100)}%` }}>
-                {info.cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame).map(cue => <button type="button" key={`${cue.lineIndex}-${cue.frame}`} className="lua-cue-marker" style={{ left: `${((cue.frame - clip.inFrame) / duration) * 100}%` }} title={`${cue.frame}f · ${cue.name}`} onClick={event => { event.stopPropagation(); setSelectedId(clip.id); setPlayhead(clip.startFrame + cue.frame - clip.inFrame); setSyncedFrame(null) }} />)}
+                {info.cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame).map(cue => <button type="button" key={`${cue.node.range[0]}-${cue.frame}`} className="lua-cue-marker" style={{ left: `${((cue.frame - clip.inFrame) / duration) * 100}%` }} title={`${cue.frame}f · ${cue.name}`} onClick={event => { event.stopPropagation(); setSelectedId(clip.id); setPlayhead(clip.startFrame + cue.frame - clip.inFrame); setSyncedFrame(null) }} />)}
               </div>
               {visibleFrame <= totalFrames && <i className="lua-playhead" style={{ left: `${(visibleFrame / totalFrames) * 100}%` }} />}
             </div></div>
@@ -646,7 +476,8 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
           <div className="lua-clip-tools"><button type="button" disabled={!selected} onClick={removeSelected}><Trash2 size={14} />{vi ? 'Xóa đoạn' : 'Remove clip'}</button></div>
         </section>
         <section className="lua-panel lua-code-panel"><header><FileCode2 size={15} /><strong>{selected?.name || (vi ? 'Mã nguồn' : 'Source')}</strong><span>{selectedInfo.lines.length} {vi ? 'dòng' : 'lines'}</span></header>
-          {selectedInfo.unmapped?.length > 0 && <p className="lua-warning">{vi ? `${selectedInfo.unmapped.length} lệnh có frame/count dạng biến hoặc nhiều dòng nên sẽ giữ nguyên khi cắt/dời.` : `${selectedInfo.unmapped.length} calls use an expression or multiline frame/count and will stay unchanged when trimmed or moved.`}</p>}
+          {selectedInfo.error && <p className="lua-warning">{selectedInfo.error}</p>}
+          {selectedInfo.unmapped?.length > 0 && <p className="lua-warning">{vi ? `${selectedInfo.unmapped.length} lệnh chưa xác định được frame. Cần sửa các biểu thức này trước khi ghép.` : `${selectedInfo.unmapped.length} calls have unresolved frames. Resolve these expressions before merging.`}</p>}
           {selected ? <><div className="lua-clip-fields">
             <label><span>{vi ? 'Tên đoạn' : 'Clip name'}</span><input value={selected.name} onChange={event => patchSelected({ name: event.target.value })} /></label>
             <label><span>{vi ? 'Vị trí trên timeline' : 'Timeline start'}</span><input type="number" min="0" value={selected.startFrame} onChange={event => patchSelected({ startFrame: Math.max(0, Number(event.target.value) || 0) })} /></label>
@@ -657,7 +488,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       </div>
 
       <section className="lua-panel lua-composed-panel"><header><FileCode2 size={15} /><strong>{vi ? 'Script ghép · bản nháp thứ ba' : 'Combined script · third draft'}</strong><span>{autoPreviewError || (autoPreviewing ? (vi ? 'Đang nạp vào player…' : 'Updating player…') : `${composedDraft.split(/\r?\n/).length} ${vi ? 'dòng' : 'lines'}`)}</span></header>
-        <p className="lua-browser-hint">{vi ? 'Đổi thứ tự, IN/OUT hoặc mã nguồn sẽ tự ghép lại và nạp script thứ ba vào player. Bạn có thể sửa trực tiếp bản ghép; nút nạp và nút lưu sẽ dùng đúng nội dung ở đây.' : 'Changing clip order, IN/OUT, or source code rebuilds and loads the third script in the player. Edit the merged draft here; preview and save use this exact text.'}</p>
+        <p className="lua-browser-hint">{vi ? 'Đổi thứ tự, IN/OUT hoặc mã nguồn sẽ tự ghép lại. Bạn có thể sửa trực tiếp bản ghép; preview và lưu sẽ áp dụng định dạng cùng frame damage ở mục Xuất script custom.' : 'Changing clip order, IN/OUT, or source rebuilds the draft. Edit it here; preview and save apply the format and damage frame selected below.'}</p>
         <textarea className="lua-source-editor" spellCheck="false" value={composedDraft} onChange={event => setComposedDraft(event.target.value)} placeholder={vi ? 'Script ghép sẽ xuất hiện ở đây…' : 'The merged script will appear here…'} />
       </section>
 
@@ -666,8 +497,17 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       </section>
 
       <section className="lua-panel lua-save-panel"><header><Save size={15} /><strong>{vi ? 'Xuất script custom' : 'Save custom script'}</strong></header>
-        <div className="lua-save-fields"><label><span>{vi ? 'Tên file' : 'File name'}</span><input value={filename} onChange={event => setFilename(event.target.value)} /></label><label><span>{vi ? 'Thư mục đích trong patch' : 'Patch target folder'}</span><select value={target} onChange={event => setTarget(event.target.value)}>{TARGETS.map(([value, labelEn, labelVi]) => <option key={value} value={value}>{vi ? labelVi : labelEn}</option>)}</select></label></div>
-        <p>{vi ? `File gốc được lưu riêng ở game res/ab_script/custom_lua. Khi xuất patch, bản này được chép vào lua/ab_script/${target}/ để thẻ có thể tham chiếu theo tên script.` : `The source is saved under game res/ab_script/custom_lua. Patch export copies it to lua/ab_script/${target}/ so a card can reference it by script name.`}</p>
+        <div className="lua-save-fields"><label><span>{vi ? 'Tên file' : 'File name'}</span><input value={filename} onChange={event => setFilename(event.target.value)} /></label><label><span>{vi ? 'Định dạng animation' : 'Animation format'}</span><select value={target} onChange={event => changeFormat(event.target.value)}>{CUSTOM_LUA_FORMATS.map(format => <option key={format.id} value={format.id}>{vi ? format.vi : format.en}</option>)}</select></label></div>
+        <div className="lua-export-guidance">
+          <p>{target === 'entrance'
+            ? (vi ? 'Entrance tự comment toàn bộ dealDamage và setDamage. Không thêm damage vào animation xuất trận.' : 'Entrance comments out all dealDamage and setDamage calls.')
+              : damageAvailable
+              ? (vi ? 'Bật tùy chọn để thay mọi dealDamage cũ bằng một lệnh tại frame này. Tạm dừng player rồi bấm Dùng frame đang pause, hoặc nhập frame.' : 'Enable to replace existing dealDamage calls with one call at this frame. Pause the player and capture its frame, or enter a frame.')
+              : (vi ? 'Chỉ Super Attack, đòn Active Skill ut*.lua và Finish Skill cho phép đặt frame damage.' : 'A custom damage frame is available only for Super Attack, Active Skill ut*.lua, and Finish Skill.')}</p>
+        </div>
+        {exportError && <p className="lua-export-error" role="alert">{exportError}</p>}
+        <p>{vi ? `File lưu: ${preparedExport.filename || filename}.lua → lua/ab_script/${exportFolder}/. Bản nguồn được lưu riêng tại game res/ab_script/custom_lua.` : `Saved file: ${preparedExport.filename || filename}.lua → lua/ab_script/${exportFolder}/. The source is stored under game res/ab_script/custom_lua.`}</p>
+        {preparedExport.content && <details><summary>{vi ? 'Xem Lua sẽ preview và lưu' : 'View the Lua used for preview and save'}</summary><pre>{preparedExport.content}</pre></details>}
       </section>
       {message && <p className="lua-studio-message" role="status">{message}</p>}
     </>)}

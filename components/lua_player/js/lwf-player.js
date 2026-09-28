@@ -565,6 +565,12 @@ export class LwfLayer {
     }
   }
 
+  seekPlayerToAbFrame(player, abFrame, abFps = 60) {
+    const elapsed = Math.max(0, Number(abFrame) - (Number(player?.startFrame) || 0));
+    const lwfFps = Number(player?.lwf?.frameRate) || 30;
+    this._seekPlayerToElapsed(player, elapsed * lwfFps / abFps);
+  }
+
   seekToAbFrame(abFrame, { frameStepsPerAb = 1, force = false } = {}) {
     if (this._refLock && !force) return;
     const f = Number(abFrame);
