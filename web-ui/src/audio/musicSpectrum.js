@@ -1,11 +1,12 @@
-// One AudioContext/analyser and one sampler for both music players and all visuals.
+import { createFrequencyRanges, measureFrequencyBands } from './spectrumBands'
+
+// One AudioContext and sampler; each source owns its analysis tap.
 let context = null
-let analyser = null
-let bins = null
 let active = null
 let timer = 0
 const sources = new Set()
 const levels = new Float32Array(24)
+const spectrumBands = new Float32Array(56)
 const eventName = 'dokkan:character-ost-spectrum'
 
 function publish(detail) {
@@ -15,22 +16,25 @@ function stopSampling() {
   clearTimeout(timer)
   timer = 0
   levels.fill(0)
+  spectrumBands.fill(0)
   publish(null)
 }
 function sample() {
   timer = 0
   if (!active || active.audio.paused || document.hidden) return
-  analyser.getByteFrequencyData(bins)
-  for (let i = 0; i < levels.length; i++) {
-    const lo = Math.floor(1 + (i / levels.length) ** 1.8 * 180)
-    const hi = Math.max(lo + 1, Math.floor(1 + ((i + 1) / levels.length) ** 1.8 * 180))
-    let energy = 0
-    for (let k = lo; k < hi; k++) energy += bins[k]
-    const target = energy / ((hi - lo) * 255)
-    levels[i] += (target - levels[i]) * (target > levels[i] ? 0.65 : 0.28)
+  const { analyser, frequencies, timeDomain, ranges, ambientRanges } = active.analysis
+  analyser.getFloatFrequencyData(frequencies)
+  analyser.getFloatTimeDomainData(timeDomain)
+  let squareSum = 0
+  for (let i = 0; i < timeDomain.length; i++) {
+    const sampleValue = timeDomain[i]
+    squareSum += sampleValue * sampleValue
   }
-  publish({ levels, bass: (levels[0] + levels[1] + levels[2]) / 3 })
-  timer = window.setTimeout(sample, 50) // 20 Hz analysis; visuals interpolate separately.
+  const rms = Math.sqrt(squareSum / timeDomain.length)
+  measureFrequencyBands(frequencies, ambientRanges, levels)
+  measureFrequencyBands(frequencies, ranges, spectrumBands)
+  publish({ levels, bands: spectrumBands, bass: (levels[0] + levels[1] + levels[2]) / 3, rms })
+  timer = window.setTimeout(sample, 33)
 }
 function visibilityChanged() {
   clearTimeout(timer)
@@ -46,6 +50,7 @@ export function createMusicSource(audio) {
   let presence = null
   let compressor = null
   let transition = null
+  let meterMute = null
   let transitionTimer = 0
   let settleTransition = null
   let transitionLevel = 1
@@ -54,6 +59,7 @@ export function createMusicSource(audio) {
   let disposed = false
   const handle = {
     audio,
+    analysis: null,
     start() {
       if (disposed) return
       try {
@@ -61,11 +67,6 @@ export function createMusicSource(audio) {
           const AC = window.AudioContext || window.webkitAudioContext
           if (!AC) return
           context = new AC()
-          analyser = context.createAnalyser()
-          analyser.fftSize = 512
-          analyser.smoothingTimeConstant = 0.65
-          bins = new Uint8Array(analyser.frequencyBinCount)
-          analyser.connect(context.destination)
         }
         if (!source) {
           source = context.createMediaElementSource(audio)
@@ -88,7 +89,20 @@ export function createMusicSource(audio) {
           compressor.release.value = 0.22
           transition = context.createGain()
           transition.gain.value = transitionLevel
-          source.connect(bass).connect(clarity).connect(presence).connect(compressor).connect(transition).connect(analyser)
+          source.connect(bass).connect(clarity).connect(presence).connect(compressor).connect(transition).connect(context.destination)
+          const meterAnalyser = context.createAnalyser()
+          meterAnalyser.fftSize = 8192
+          meterAnalyser.smoothingTimeConstant = 0.08
+          meterMute = context.createGain()
+          meterMute.gain.value = 0
+          source.connect(meterAnalyser).connect(meterMute).connect(context.destination)
+          handle.analysis = {
+            analyser: meterAnalyser,
+            frequencies: new Float32Array(meterAnalyser.frequencyBinCount),
+            timeDomain: new Float32Array(meterAnalyser.fftSize),
+            ranges: createFrequencyRanges(context.sampleRate, meterAnalyser.fftSize, spectrumBands.length),
+            ambientRanges: createFrequencyRanges(context.sampleRate, meterAnalyser.fftSize, levels.length),
+          }
           handle.setPunch(punch)
           handle.setEqEnabled(eqEnabled)
         }
@@ -169,12 +183,13 @@ export function createMusicSource(audio) {
       presence?.disconnect()
       compressor?.disconnect()
       transition?.disconnect()
+      handle.analysis?.analyser.disconnect()
+      meterMute?.disconnect()
       sources.delete(handle)
       if (!sources.size) {
         document.removeEventListener('visibilitychange', visibilityChanged)
-        analyser?.disconnect()
         void context?.close().catch(() => {})
-        context = analyser = bins = null
+        context = null
       }
     }
   }

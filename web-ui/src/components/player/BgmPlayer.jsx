@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Disc, Play, Pause, Shuffle, Repeat, SkipForward, Volume2, VolumeX, Volume1, Music2, SlidersHorizontal, ChevronDown, Search, Check, Upload, Copy, CheckCircle2, AlertCircle, X } from 'lucide-react'
 import { api } from '../../api'
 import { createMusicSource } from '../../audio/musicSpectrum'
 import { encodeLoopingWav } from '../../audio/wav'
 
-export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomBgm }) {
+export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomBgm, immersive = false }) {
   const [tracks, setTracks] = useState([])
+  const [trackCatalogReady, setTrackCatalogReady] = useState(false)
   const [currentTrack, setCurrentTrack] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [volume, setVolume] = useState(0.30)
   const [isMuted, setIsMuted] = useState(false)
   const [isShuffle, setIsShuffle] = useState(true) // Default to auto-shuffle playlist like Streamlit
+  const [trackFilter, setTrackFilter] = useState('all')
   const [isLoopOne, setIsLoopOne] = useState(false) // Single track repeat
   const [eqEnabled, setEqEnabled] = useState(true)
   const [trackNotice, setTrackNotice] = useState(null)
@@ -29,6 +31,9 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
   const switchGeneration = useRef(0)
   const noticeTimer = useRef(0)
   const importToastTimer = useRef(0)
+  const trackRetryTimer = useRef(0)
+  const availableTracks = useMemo(() => tracks.filter(track =>
+    trackFilter === 'all' || (trackFilter === 'custom' ? track.custom : !track.custom)), [tracks, trackFilter])
   const bindAudio = useCallback((element) => {
     audioRef.current = element
     if (element) {
@@ -50,17 +55,41 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
 
   useEffect(() => {
     let active = true
-    const loadTracks = () => api.getBgmTracks()
-      .then((res) => {
+    let attempt = 0
+    const scheduleRetry = () => {
+      if (!active) return
+      window.clearTimeout(trackRetryTimer.current)
+      const delay = Math.min(5000, 350 * (2 ** Math.min(attempt, 4)))
+      attempt++
+      trackRetryTimer.current = window.setTimeout(() => { void loadTracks() }, delay)
+    }
+    const loadTracks = async () => {
+      try {
+        const res = await api.getBgmTracks()
         if (!active || !Array.isArray(res.tracks)) return
         setTracks(res.tracks)
-        setCurrentTrack(previous => res.tracks.find(track => track.id === previous?.id) || res.tracks[0] || null)
-      })
-      .catch((err) => console.warn('Failed to load BGM tracklist:', err))
-    const onCustomBgmAdded = event => { void loadTracks(event.detail?.id) }
+        if (res.tracks.length > 0) {
+          setTrackCatalogReady(true)
+          setCurrentTrack(previous => res.tracks.find(track => track.id === previous?.id) || previous || res.tracks[0])
+          attempt = 0
+          window.clearTimeout(trackRetryTimer.current)
+        } else {
+          scheduleRetry()
+        }
+      } catch (err) {
+        if (!active) return
+        console.warn('Failed to load BGM tracklist; retrying:', err)
+        scheduleRetry()
+      }
+    }
+    const onCustomBgmAdded = () => { attempt = 0; void loadTracks() }
     void loadTracks()
     window.addEventListener('dokkan:custom-bgm-added', onCustomBgmAdded)
-    return () => { active = false; window.removeEventListener('dokkan:custom-bgm-added', onCustomBgmAdded) }
+    return () => {
+      active = false
+      window.clearTimeout(trackRetryTimer.current)
+      window.removeEventListener('dokkan:custom-bgm-added', onCustomBgmAdded)
+    }
   }, [])
 
   useEffect(() => {
@@ -165,6 +194,17 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
     }
   }
 
+  useEffect(() => {
+    if (currentTrack && availableTracks.some(track => track.id === currentTrack.id)) return
+    const next = availableTracks[0] || null
+    if (isPlaying && next) {
+      void playSpecificTrack(next)
+    } else {
+      if (!next) audioRef.current?.pause()
+      setCurrentTrack(next)
+    }
+  }, [availableTracks, currentTrack, isPlaying])
+
   const togglePlay = () => {
     if (!audioRef.current || !currentTrack) return
     switchGeneration.current++
@@ -186,19 +226,23 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
   }
 
   const playRandomTrack = () => {
-    if (tracks.length <= 1) return
-    const others = tracks.filter(t => t.id !== currentTrack?.id)
-    const nextTrack = others.length > 0 ? others[Math.floor(Math.random() * others.length)] : tracks[0]
+    if (!availableTracks.length) return
+    const others = availableTracks.filter(t => t.id !== currentTrack?.id)
+    const nextTrack = others.length > 0 ? others[Math.floor(Math.random() * others.length)] : availableTracks[0]
     if (nextTrack) {
       playSpecificTrack(nextTrack)
     }
   }
 
   const playNextTrack = () => {
-    if (tracks.length === 0) return
-    const curIdx = tracks.findIndex(t => t.id === currentTrack?.id)
-    const nextIdx = (curIdx + 1) % tracks.length
-    playSpecificTrack(tracks[nextIdx])
+    if (!availableTracks.length) return
+    const curIdx = availableTracks.findIndex(t => t.id === currentTrack?.id)
+    const nextIdx = (curIdx + 1) % availableTracks.length
+    playSpecificTrack(availableTracks[nextIdx])
+  }
+
+  const changeTrackFilter = event => {
+    setTrackFilter(event.target.value)
   }
 
   const handleTrackEnded = () => {
@@ -282,7 +326,7 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
   const accentStyle = { '--ost-accent': accent, '--ost-accent-soft': `${accent}24`, '--ost-accent-line': `${accent}85` }
 
   return (
-    <section className="top-bgm-player" ref={playerRef} aria-label={vi ? 'Trình phát nhạc nền chung' : 'Global game music player'} style={accentStyle}>
+    <section className={`top-bgm-player ${immersive ? 'immersive' : ''}`} ref={playerRef} aria-label={vi ? 'Trình phát nhạc nền chung' : 'Global game music player'} style={accentStyle}>
       <audio
         ref={bindAudio}
         crossOrigin="anonymous" preload="none"
@@ -299,7 +343,7 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
       </div>
 
       <div className="bgm-select-wrap">
-        <span className="bgm-caption"><Music2 size={12} /> GAME OST <i /> {tracks.length} {vi ? 'bài' : 'tracks'}</span>
+        <span className="bgm-caption"><Music2 size={12} /> GAME OST <i /> {tracks.length === 0 && !trackCatalogReady ? (vi ? 'Đang kết nối…' : 'Connecting…') : `${availableTracks.length} ${vi ? 'bài' : 'tracks'}`}</span>
         <button ref={trackTriggerRef} type="button" className="bgm-track-trigger" aria-haspopup="dialog" aria-expanded={trackMenuOpen}
           onClick={() => { setTrackMenuOpen(value => !value); setTrackQuery('') }} title={vi ? 'Chọn nhạc nền' : 'Choose background music'}>
           <span>{currentTrack?.title || (vi ? 'Chọn nhạc nền' : 'Choose background music')}</span><ChevronDown size={12} />
@@ -309,9 +353,9 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
           <label className="bgm-track-search"><Search size={13} /><input autoFocus value={trackQuery}
             onChange={event => setTrackQuery(event.target.value)} placeholder={vi ? 'Tìm tên OST hoặc mã BGM…' : 'Search OST title or BGM ID…'} /></label>
           <div className="bgm-track-options">
-            {tracks.filter(track => !trackQuery || track.title.toLowerCase().includes(trackQuery.toLowerCase()) || String(track.id).includes(trackQuery)).length === 0
+            {availableTracks.filter(track => !trackQuery || track.title.toLowerCase().includes(trackQuery.toLowerCase()) || String(track.id).includes(trackQuery)).length === 0
               ? <p className="bgm-track-empty">{vi ? 'Không tìm thấy OST phù hợp' : 'No matching OST found'}</p>
-              : tracks.filter(track => !trackQuery || track.title.toLowerCase().includes(trackQuery.toLowerCase()) || String(track.id).includes(trackQuery))
+              : availableTracks.filter(track => !trackQuery || track.title.toLowerCase().includes(trackQuery.toLowerCase()) || String(track.id).includes(trackQuery))
               .map(track => <button type="button" role="option" aria-selected={track.id === currentTrack?.id}
                 className={`bgm-track-option ${track.id === currentTrack?.id ? 'selected' : ''}`} key={track.id}
                 onClick={() => { handleTrackChange({ target: { value: track.id } }); setTrackMenuOpen(false) }}>
@@ -323,6 +367,14 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
       </div>
 
       <div className="bgm-controls">
+        <label className="bgm-filter-wrap" title={vi ? 'Lọc danh sách OST' : 'Filter OST library'}>
+          <SlidersHorizontal size={12} aria-hidden="true" />
+          <select aria-label={vi ? 'Lọc OST: Tất cả, gốc hoặc tùy chỉnh' : 'Filter OST: All, Original, or Custom'} value={trackFilter} onChange={changeTrackFilter}>
+            <option value="all">{vi ? 'Tất cả' : 'All'}</option>
+            <option value="original">{vi ? 'Gốc' : 'Original'}</option>
+            <option value="custom">Custom OST</option>
+          </select>
+        </label>
         <input ref={importInputRef} className="custom-bgm-file-input" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav"
           onChange={event => void importAudio(event.target.files?.[0])} />
         <button type="button" className="bgm-btn custom-bgm-import" onClick={() => importInputRef.current?.click()} disabled={importBusy}
@@ -344,7 +396,7 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
           type="button"
           className="bgm-btn next"
           onClick={isShuffle ? playRandomTrack : playNextTrack}
-          disabled={tracks.length <= 1}
+          disabled={availableTracks.length <= 1}
           title="Next Track"
         >
           <SkipForward size={12} />

@@ -351,6 +351,7 @@ export function App() {
         selectedId={selectedId}
         onSelectCard={(id) => {
           setSelectedId(id)
+          if (activeTab === 'lua-studio') setActiveTab('stats')
           setSidebarOpen(false)
         }}
         isOpen={sidebarOpen}
@@ -363,6 +364,17 @@ export function App() {
 
       {/* Main Workspace */}
       <main className="workspace-container">
+        <div className={`app-global-ost-row ${!card && activeTab !== 'lua-studio' ? 'listening-room' : ''}`}>
+          <BgmPlayer accent={accent} language={language} onImportCustomBgm={handleImportCustomBgm} immersive={!card && activeTab !== 'lua-studio'} />
+        </div>
+        {!card && activeTab !== 'lua-studio' && <button type="button"
+          className={`empty-sidebar-edge-toggle ${sidebarOpen ? 'sidebar-visible' : 'sidebar-hidden'}`}
+          style={{ left: sidebarOpen ? 368 : 0 }}
+          onClick={() => setSidebarOpen(value => !value)}
+          aria-label={sidebarOpen ? (language === 'vi' ? 'Ẩn bảng tìm kiếm thẻ' : 'Hide card search') : (language === 'vi' ? 'Hiện bảng tìm kiếm thẻ' : 'Show card search')}
+          title={sidebarOpen ? (language === 'vi' ? 'Ẩn bảng tìm kiếm' : 'Hide search') : (language === 'vi' ? 'Hiện bảng tìm kiếm' : 'Show search')}>
+          {sidebarOpen ? <ChevronLeft size={17} /> : <ChevronRight size={17} />}
+        </button>}
         {card ? (
           <>
             <Header
@@ -384,7 +396,6 @@ export function App() {
               playerOpen={playerOpen}
               onTogglePlayer={() => setPlayerOpen(!playerOpen)}
               language={language}
-              onImportCustomBgm={handleImportCustomBgm}
             />
 
             {/* Tab navigation with explicit controls for overflowing tabs. */}
@@ -636,32 +647,54 @@ export function App() {
               </aside>
             </div>
           </>
+        ) : activeTab === 'lua-studio' ? (
+          <div className="standalone-timeline-view">
+            <header className="standalone-timeline-topbar">
+              <div className="standalone-timeline-topline">
+                <div className="standalone-timeline-brand"><Clapperboard size={18} /><span>Lua Animation Timeline</span></div>
+                <button type="button" className="standalone-timeline-back" onClick={() => { setActiveTab('stats'); setLuaEditorMode(false) }}>
+                  {language === 'vi' ? 'Về nghe nhạc' : 'Back to music'}
+                </button>
+              </div>
+            </header>
+            <div className="standalone-timeline-content has-player">
+              <div className="standalone-timeline-editor">
+              <LuaAnimationStudio card={null} language={language} editorMode={luaEditorMode}
+                onToggleEditorMode={() => setLuaEditorMode(value => !value)}
+                previewAnimation={luaPreviewAnimation} onPreviewChange={setLuaPreviewAnimation}
+                onTimelinePlay={setLuaTimelinePlayback} />
+              </div>
+              <aside className="standalone-timeline-preview">
+                <AnimPlayer key="standalone-lua-preview"
+                  card={{ id: luaPreviewAnimation?.card_id || 0, name: luaPreviewAnimation?.card_name || 'Lua Timeline', element: luaPreviewAnimation?.element ?? 0 }}
+                  editorMode previewAnimation={luaPreviewAnimation} timelinePlayback={luaTimelinePlayback}
+                  language={language} isCollapsed={false} />
+              </aside>
+            </div>
+          </div>
         ) : (
           <div className="empty-workspace">
             <div className="empty-workspace-card">
               <div className="empty-hero-heading">
                 <div className="empty-icon-wrap">
-                  <Users size={27} />
+                  <Disc size={25} />
                   <i />
                 </div>
-                <span className="empty-kicker">DOKKAN STUDIO <i /> CARD WORKSPACE</span>
+                <span className="empty-kicker">DOKKAN STUDIO <i /> OST LISTENING ROOM</span>
               </div>
-              <h2>{language === 'vi' ? 'Chọn một thẻ nhân vật' : 'Choose a character card'}</h2>
-              <p>{language === 'vi' ? 'Tìm thẻ trong danh sách bên trái để xem dữ liệu, chỉnh sửa kỹ năng và phát thử animation.' : 'Find a card in the left list to view its data, edit skills and preview animations.'}</p>
+              <h2>{language === 'vi' ? 'Bật nhạc. Vào thế giới Dokkan.' : 'Press play. Enter the Dokkan world.'}</h2>
+              <p>{language === 'vi' ? 'Nghe OST gốc và playlist tùy chỉnh ngay cả khi chưa mở thẻ nhân vật. Chọn thẻ bên trái khi muốn bắt đầu chỉnh sửa.' : 'Listen to original tracks and custom OSTs before opening a character card. Pick a card on the left when you are ready to edit.'}</p>
               <div className="empty-workspace-features">
                 <span><Activity size={15} /> {language === 'vi' ? 'Chỉnh sửa dữ liệu' : 'Edit card data'}</span>
                 <span><Film size={15} /> {language === 'vi' ? 'Xem animation' : 'Preview animation'}</span>
                 <span><PackageCheck size={15} /> {language === 'vi' ? 'Xuất mod' : 'Export mod'}</span>
               </div>
-              <button type="button" className="empty-lua-studio-link" onClick={() => { setActiveTab('lua-studio'); setSidebarOpen(true) }}>
-                <Clapperboard size={16} /> {language === 'vi' ? 'Mở Lua Animation Timeline' : 'Open Lua Animation Timeline'}
+              <button type="button" className="empty-lua-studio-link" onClick={() => { setActiveTab('lua-studio'); setLuaEditorMode(true); setSidebarOpen(false) }}>
+                <Clapperboard size={16} /> {language === 'vi' ? 'Mở Lua Animation Editor' : 'Open Lua Animation Editor'}
               </button>
               <div className="empty-player-wrap">
-                <BgmPlayer accent={accent} language={language} onImportCustomBgm={handleImportCustomBgm} />
+                <div className="jukebox-visualizer"><MusicWave className="jukebox-wave" /><span>{language === 'vi' ? 'ÂM THANH PHẢN HỒI THEO NHẠC' : 'AUDIO REACTIVE VISUALIZER'}</span></div>
               </div>
-              {!sidebarOpen && <button type="button" className="open-roster-btn" onClick={() => setSidebarOpen(true)}>
-                <Users size={16} /><span>{language === 'vi' ? 'Mở danh sách thẻ' : 'Open card list'}</span>
-              </button>}
             </div>
           </div>
         )}

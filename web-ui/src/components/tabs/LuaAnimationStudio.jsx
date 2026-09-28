@@ -62,6 +62,10 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     ![animation.name, animation.title, animation.animation_name, animation.move_name]
       .some(value => String(value || '').toLowerCase().includes('(extreme)'))),
   [sourceAnimations])
+  const firstSourceAnimation = clips.find(clip => clip.sourceAnimation?.card_id)?.sourceAnimation
+  const previewCardId = card?.id || selectedSourceCard?.id || previewAnimation?.card_id || firstSourceAnimation?.card_id || null
+  const previewCardName = card?.name || selectedSourceCard?.name || previewAnimation?.card_name || firstSourceAnimation?.card_name || 'Lua Timeline'
+  const previewElement = card?.element ?? selectedSourceCard?.element ?? previewAnimation?.element ?? firstSourceAnimation?.element ?? 0
   const fileRef = useRef(null)
   const timelineRef = useRef(null)
   const liveScriptScrollerRef = useRef(null)
@@ -178,7 +182,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     const revision = ++previewRevisionRef.current
     setAutoPreviewError(exportError || '')
     if (exportError) { setAutoPreviewing(false); return }
-    if (!clips.length || !editorMode || !card?.id || !content.trim()) {
+    if (!clips.length || !editorMode || !previewCardId || !content.trim()) {
       setAutoPreviewing(false)
       return
     }
@@ -186,13 +190,13 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     const timer = setTimeout(async () => {
       try {
         if (revision !== previewRevisionRef.current) return
-        const saved = await api.previewCustomLua(`timeline_${card.id}_draft`, content)
+        const saved = await api.previewCustomLua(`timeline_${previewCardId}_draft`, content)
         if (revision !== previewRevisionRef.current) return
         onTimelinePlay?.({ id: Date.now(), sequence: [] })
         onPreviewChange?.({
           title: `${preparedExport.filename} · Preview`, name: saved.filename,
-          type: vi ? 'Lua Timeline Draft' : 'Lua Timeline Draft', card_id: card.id,
-          card_name: card.name, element: card.element,
+          type: vi ? 'Lua Timeline Draft' : 'Lua Timeline Draft', card_id: previewCardId,
+          card_name: previewCardName, element: previewElement,
           preview_revision: revision,
           script_path: `ab_script/custom_lua/${saved.filename}`
         })
@@ -207,7 +211,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       clearTimeout(timer)
       previewRevisionRef.current += 1
     }
-  }, [preparedExport.content, preparedExport.filename, exportError, editorMode, card?.id])
+  }, [preparedExport.content, preparedExport.filename, exportError, editorMode, previewCardId, previewCardName, previewElement])
   const currentCues = useMemo(() => clips.flatMap(clip => {
     const { cues } = inspectScript(clip.content)
     return cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame)
@@ -329,33 +333,35 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   }
 
   const saveScript = async () => {
-    if (!clips.length || !preparedExport.content?.trim() || exportError || !card?.id || busy) return
+    if (!clips.length || !preparedExport.content?.trim() || exportError || busy) return
     setBusy(true); setMessage('')
     try {
       const saved = await api.saveCustomLua(preparedExport.filename, preparedExport.content)
       const archivePath = `lua/ab_script/${preparedExport.folder}/${saved.filename}`
-      onStageSaved?.({ source_path: saved.source_path, archive_path: archivePath, filename: saved.filename, target: preparedExport.folder, format: target })
-      setMessage(vi ? `Đã lưu ${saved.filename} vào game res/ab_script/custom_lua và thêm vào patch của thẻ #${card.id}.` : `Saved ${saved.filename} under game res/ab_script/custom_lua and staged it in card #${card.id}'s patch.`)
+      if (card?.id) onStageSaved?.({ source_path: saved.source_path, archive_path: archivePath, filename: saved.filename, target: preparedExport.folder, format: target })
+      setMessage(card?.id
+        ? (vi ? `Đã lưu ${saved.filename} vào game res/ab_script/custom_lua và thêm vào patch của thẻ #${card.id}.` : `Saved ${saved.filename} under game res/ab_script/custom_lua and staged it in card #${card.id}'s patch.`)
+        : (vi ? `Đã lưu ${saved.filename} vào game res/ab_script/custom_lua. Chọn thẻ để thêm script vào patch.` : `Saved ${saved.filename} under game res/ab_script/custom_lua. Choose a card to stage it in a patch.`))
     } catch (error) {
       setMessage(error.message || (vi ? 'Không thể lưu Lua.' : 'Could not save Lua.'))
     } finally { setBusy(false) }
   }
 
   const previewScript = async () => {
-    if (!clips.length || !preparedExport.content?.trim() || exportError || !card?.id || busy) return
+    if (!clips.length || !preparedExport.content?.trim() || exportError || !previewCardId || busy) return
     previewRevisionRef.current += 1
     setAutoPreviewing(false)
     setBusy(true); setMessage('')
     try {
-      const saved = await api.previewCustomLua(`timeline_${card.id}_draft`, preparedExport.content)
+      const saved = await api.previewCustomLua(`timeline_${previewCardId}_draft`, preparedExport.content)
       onTimelinePlay?.({ id: Date.now(), sequence: [] })
       onPreviewChange?.({
         title: `${preparedExport.filename} · Preview`,
         name: saved.filename,
         type: vi ? 'Lua Timeline Draft' : 'Lua Timeline Draft',
-        card_id: card.id,
-        card_name: card.name,
-        element: card.element,
+        card_id: previewCardId,
+        card_name: previewCardName,
+        element: previewElement,
         preview_revision: Date.now(),
         script_path: `ab_script/custom_lua/${saved.filename}`
       })
@@ -385,7 +391,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
         {editorMode && <>
           <input ref={fileRef} type="file" accept=".lua,text/plain" multiple hidden onChange={event => { void importFiles(event.target.files || []); event.target.value = '' }} />
           <button type="button" className="lua-action secondary" onClick={() => fileRef.current?.click()}><FolderPlus size={15} />{vi ? 'Thêm Lua' : 'Import Lua'}</button>
-          <button type="button" className="lua-action primary" onClick={() => void saveScript()} disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !card?.id}><Save size={15} />{busy ? (vi ? 'Đang lưu…' : 'Saving…') : (vi ? 'Lưu anim custom' : 'Save custom animation')}</button>
+          <button type="button" className="lua-action primary" onClick={() => void saveScript()} disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy}><Save size={15} />{busy ? (vi ? 'Đang lưu…' : 'Saving…') : (vi ? 'Lưu anim custom' : 'Save custom animation')}</button>
         </>}
         {editorMode && onNavigateBack && <button type="button" className="lua-action quiet" onClick={onNavigateBack}>{vi ? 'Quay lại' : 'Back'}</button>}
       </div>
@@ -449,7 +455,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       <button type="button" className="lua-action secondary" disabled={!previewAnimation?.script_path} onClick={() => window.dispatchEvent(new CustomEvent('dokkan:anim-player-control', { detail: { action: playerIsPlaying ? 'pause' : 'play' } }))}>{playerIsPlaying ? <Pause size={14} /> : <Play size={14} />}{playerIsPlaying ? (vi ? 'Tạm dừng player' : 'Pause player') : (vi ? 'Phát player' : 'Play player')}</button>
       <button type="button" className={`lua-action secondary ${followPlayer ? 'selected' : ''}`} onClick={() => { setFollowPlayer(value => !value); setSyncedFrame(null) }}><Radio size={14} />{vi ? 'Theo player' : 'Follow player'}</button>
       <button type="button" className="lua-action secondary" disabled={!selected || visibleFrame < selected.startFrame || visibleFrame >= selected.startFrame + selected.outFrame - selected.inFrame} onClick={splitSelected}><Scissors size={14} />{vi ? 'Cắt tại playhead' : 'Split at playhead'}</button>
-      <button type="button" className="lua-action secondary" disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !card?.id} onClick={() => void previewScript()}><MonitorPlay size={14} />{busy ? (vi ? 'Đang nạp script…' : 'Loading script…') : (vi ? 'Nạp script ghép vào player' : 'Load merged script in player')}</button>
+      <button type="button" className="lua-action secondary" disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !previewCardId} onClick={() => void previewScript()}><MonitorPlay size={14} />{busy ? (vi ? 'Đang nạp script…' : 'Loading script…') : (vi ? 'Nạp script ghép vào player' : 'Load merged script in player')}</button>
       <span className="lua-frame-readout"><Clock3 size={14} />{Math.round(visibleFrame)} / {totalFrames}f</span>
       <div className="lua-damage-controls lua-damage-toolbar">
         <label className="lua-damage-check"><input type="checkbox" checked={removeDamageEnabled} onChange={event => { setRemoveDamageEnabled(event.target.checked); if (event.target.checked) setDamageEnabled(false) }} /><span>{vi ? 'Bỏ dealDamage' : 'Remove dealDamage'}</span></label>

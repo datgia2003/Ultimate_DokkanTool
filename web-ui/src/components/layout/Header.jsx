@@ -1,7 +1,6 @@
 import React from 'react'
 import { Menu, Save, RotateCcw, GitBranch, Film, Sparkles, CheckCircle2 } from 'lucide-react'
 import { GameIconBadge } from '../common/CardBadge'
-import { BgmPlayer } from '../player/BgmPlayer'
 import { CharacterOstPlayer } from '../player/CharacterOstPlayer'
 import { api } from '../../api'
 import { MusicWave } from '../player/MusicWave'
@@ -17,7 +16,6 @@ export function Header({
   pendingFormCount = 0,
   hasAudioDraft = false,
   hasAnimationDraft = false,
-  onImportCustomBgm,
   isSaving,
   onSave,
   allowDatabaseSave = true,
@@ -45,11 +43,6 @@ export function Header({
             <span className="sep">/</span>
             <strong>#{card.id}</strong>
           </div>
-        </div>
-
-        {/* Global Dokkan BGM Jukebox Center Bar */}
-        <div className="header-center-tools">
-          <BgmPlayer accent={ostAccent} language={language} onImportCustomBgm={onImportCustomBgm} />
         </div>
 
         <div className="right-actions">
