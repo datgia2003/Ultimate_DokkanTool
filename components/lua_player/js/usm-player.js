@@ -477,6 +477,7 @@ export class UsmLayer {
       zIndex = movieZIndex(0),
       contentId = 0,
       startAbFrame = 0,
+      retainPrevious = false,
       isCancelled = null,
     } = {},
   ) {
@@ -496,7 +497,7 @@ export class UsmLayer {
     }
 
     for (const c of [...this.clips]) {
-      if (c.contentId === contentId || c.rel === key) {
+      if (!retainPrevious && (c.contentId === contentId || c.rel === key)) {
         c.destroy();
         const i = this.clips.indexOf(c);
         if (i >= 0) this.clips.splice(i, 1);
@@ -535,8 +536,16 @@ export class UsmLayer {
       throw new Error('Movie play cancelled');
     }
 
+    try {
+      await this._waitVideoReady(video);
+      if (cancelled()) throw new Error('Movie play cancelled');
+    } catch (error) {
+      clip.destroy();
+      throw error;
+    }
+
     const isPaused = () => (
-      this._refLock || clip._syncPaused || clip._userPaused || clip._abPaused || video.ended
+      this._refLock || clip._timelineInactive || clip._syncPaused || clip._userPaused || clip._abPaused || video.ended
     );
     const cancelBlit = () => {
       if (clip.raf) cancelAnimationFrame(clip.raf);
@@ -567,9 +576,10 @@ export class UsmLayer {
         }
       }
       this._blitClip(clip);
-      clip.wrap.style.visibility = clip.visible ? 'visible' : 'hidden';
+      clip.wrap.style.visibility = clip.visible && (!clip._timelineInactive || clip._pendingRetire) ? 'visible' : 'hidden';
       if (
         !this._refLock &&
+        !clip._timelineInactive &&
         video.paused &&
         !video.ended &&
         !clip._syncPaused &&
@@ -628,13 +638,36 @@ export class UsmLayer {
     }
   }
 
+  async prepareTimelineClip(rel, options) {
+    const clip = await this.playFromAssetRel(rel, { ...options, retainPrevious: true });
+    clip.timelineStart = options.timelineStart;
+    clip.timelineEnd = options.timelineEnd;
+    clip.preparedAtFrame = options.firstFrame;
+    await this.resetPreparedTimelineClip(clip);
+    return clip;
+  }
+
+  async resetPreparedTimelineClip(clip) {
+    clip._timelineActivated = false;
+    clip.visible = false;
+    clip._pendingRetire = false;
+    clip._timelineInactive = true;
+    clip._abPaused = true;
+    clip._syncPaused = true;
+    clip.video.pause();
+    clip.masterTime = Math.max(0, (clip.preparedAtFrame - clip.startAbFrame) / 60);
+    await this._waitSeeked(clip.video, clip.masterTime);
+    this._blitClip(clip);
+    if (clip.wrap) clip.wrap.style.visibility = 'hidden';
+  }
+
   syncMasterTimer(dtSec = 1 / 30) {
     const dt = Number(dtSec);
     if (!(dt > 0)) return;
     const rate = Math.max(0.25, Number(this._playbackRate) || 1);
     for (const c of this.clips) {
       if (!c?.video) continue;
-      if (c._syncPaused || c._userPaused || c._abPaused) {
+      if (c._timelineInactive || c._syncPaused || c._userPaused || c._abPaused) {
         this._applyClipPlayState(c);
         continue;
       }
@@ -651,7 +684,7 @@ export class UsmLayer {
 
   _correctDrift(c) {
     const v = c.video;
-    if (!v || c._syncPaused || c._userPaused || c._abPaused) return;
+    if (!v || c._timelineInactive || c._syncPaused || c._userPaused || c._abPaused) return;
     if (c._seekInFlight) return;
     if (v.readyState < 2) return;
     const now = Number(v.currentTime) || 0;
@@ -675,7 +708,7 @@ export class UsmLayer {
   isDecoderBehind(slackSec = 0.08) {
     const now = performance.now();
     for (const c of this.clips) {
-      if (!c?.video || c.video.ended) continue;
+      if (!c?.video || c._timelineInactive || c.video.ended) continue;
 
       if (c._syncPaused || c._userPaused || c._abPaused || c.video.paused) continue;
       const vt = Number(c.video.currentTime);
@@ -701,7 +734,7 @@ export class UsmLayer {
 
   hasActiveClips() {
     return this.clips.some((c) => {
-      if (!c?.video) return false;
+      if (!c?.video || c._timelineInactive) return false;
       if (c.video.ended) return false;
       const dur = Number(c.video.duration);
       if (Number.isFinite(dur) && dur > 0 && c.masterTime >= dur - 1e-3) return false;
@@ -729,13 +762,13 @@ export class UsmLayer {
   _primaryClip() {
     for (let i = this.clips.length - 1; i >= 0; i--) {
       const c = this.clips[i];
-      if (!c?.video) continue;
+      if (!c?.video || c._timelineInactive) continue;
       const dur = Number(c.video.duration);
       if (Number.isFinite(dur) && dur > 0 && c.masterTime >= dur - 1e-3) continue;
       if (c.video.ended) continue;
       return c;
     }
-    return this.clips[this.clips.length - 1] || null;
+    return this.clips.findLast(c => !c._timelineInactive) || null;
   }
 
   setSyncPause(paused) {
@@ -755,7 +788,7 @@ export class UsmLayer {
   }
 
   isIntentionallyPaused() {
-    return this._refLock || this.clips.some((c) => c && (c._userPaused || c._abPaused));
+    return this._refLock || this.clips.some((c) => c && !c._timelineInactive && (c._userPaused || c._abPaused));
   }
 
   setAbPause(paused = true) {
@@ -830,6 +863,22 @@ export class UsmLayer {
 
   freezeAtCurrent() {
     this.lockAtCurrent();
+  }
+
+  _waitVideoReady(video) {
+    if (video.readyState >= 2) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        video.removeEventListener('loadeddata', ready);
+        video.removeEventListener('error', failed);
+      };
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error('Movie could not decode its first frame')); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error('Movie frame readiness timeout')); }, 15000);
+      video.addEventListener('loadeddata', ready, { once: true });
+      video.addEventListener('error', failed, { once: true });
+    });
   }
 
   _waitSeeked(video, time) {
@@ -1085,9 +1134,11 @@ export class UsmLayer {
     if (this._refLock && !opts?.force) return;
     const f = Number(abFrame);
     if (!Number.isFinite(f)) return;
+    this.updateTimelineFrame(f);
     const rate = Math.max(1, Number(fps) || 30);
     for (const c of this.clips) {
       if (!c?.video) continue;
+      if (c._timelineInactive) continue;
       const start = Number(c.startAbFrame) || 0;
       let t = (f - start) / rate;
       if (!(t > 0)) t = 0;
@@ -1134,7 +1185,7 @@ export class UsmLayer {
       }
       return;
     }
-    const wantPause = !!(c._syncPaused || c._userPaused || c._abPaused || c.video.ended);
+    const wantPause = !!(c._timelineInactive || c._syncPaused || c._userPaused || c._abPaused || c.video.ended);
     const pauseChanged = c._effectivePaused !== wantPause;
     c._effectivePaused = wantPause;
     try {
@@ -1154,8 +1205,49 @@ export class UsmLayer {
 
   setVisible(on) {
     for (const c of this.clips) {
-      c.visible = !!on;
-      if (c.wrap) c.wrap.style.visibility = on ? 'visible' : 'hidden';
+      c.visible = !!on && (!Number.isFinite(c.timelineStart) || c._timelineActivated);
+      if (c.wrap) c.wrap.style.visibility = c.visible && (!c._timelineInactive || c._pendingRetire) ? 'visible' : 'hidden';
+    }
+  }
+
+  updateTimelineFrame(frame) {
+    for (const c of this.clips) {
+      c._timelineInactive = Number.isFinite(c.timelineStart) &&
+        (!c._timelineActivated || frame < c.timelineStart || frame >= c.timelineEnd);
+      c._pendingRetire = Number.isFinite(c.timelineEnd) && frame >= c.timelineEnd;
+      if (c.wrap) c.wrap.style.visibility = c.visible && (!c._timelineInactive || c._pendingRetire) ? 'visible' : 'hidden';
+      this._applyClipPlayState(c);
+    }
+  }
+
+  retireTimelineClip(start) {
+    for (const c of this.clips.filter(c => c.timelineStart === start)) {
+      c._pendingRetire = true;
+      c._timelineInactive = true;
+      this._applyClipPlayState(c);
+    }
+  }
+
+  commitTimelineClip(clip) {
+    if (!clip?._lastOk) throw new Error('Movie IN frame has not been rendered');
+    clip.visible = true;
+    clip._timelineActivated = true;
+    clip._pendingRetire = false;
+    clip._timelineInactive = false;
+    if (clip.wrap) clip.wrap.style.visibility = 'visible';
+    for (const old of [...this.clips]) {
+      if (old === clip || !old._pendingRetire) continue;
+      if (Number.isFinite(old.preparedAtFrame)) {
+        old.visible = false;
+        old._timelineActivated = false;
+        old._pendingRetire = false;
+        old._timelineInactive = true;
+        if (old.wrap) old.wrap.style.visibility = 'hidden';
+        this._applyClipPlayState(old);
+        continue;
+      }
+      old.destroy();
+      this.clips.splice(this.clips.indexOf(old), 1);
     }
   }
 

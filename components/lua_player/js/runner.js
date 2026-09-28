@@ -77,6 +77,7 @@ export class ActionBankRunner {
     this.reactionPreview = false;
     this._movieModeCutinSpawnFrames = new Set();
     this._movieSetupById = new Map();
+    this._timelineMoviesPrepared = new Map();
     this._usmStartedIds = new Set();
     this._cmdIndex = 0;
     this.seMeta = new Map();
@@ -232,7 +233,22 @@ export class ActionBankRunner {
     await this.bg.loadDokkanField(fieldId);
   }
   prepare() {
-
+    const movieWindows = this.commands.filter(c => c.type === 'setTimelineMovieWindow');
+    for (const c of this.commands.filter(c => c.type === 'setupMovie')) {
+      const window = movieWindows.find(w => Number(w.contentId) === Number(c.contentId) && w.start === c.frame);
+      if (window) { c.timelineStart = window.start; c.timelineEnd = window.end; }
+    }
+    const windows = new Map(this.commands.filter(c => c.type === 'setTimelineEffectWindow')
+      .map(c => [Number(c.workId), c]));
+    for (const c of this.commands) {
+      if (!['entryEffect', 'entryEffectAwaken', 'entryEffectTraining'].includes(c.type)) continue;
+      const window = windows.get(Number(c.workId));
+      if (!window) continue;
+      c.timelineStart = window.start;
+      c.timelineEnd = window.end;
+      c.sourceStart = window.sourceStart;
+      c.frame = Math.max(window.start, window.sourceStart);
+    }
     this.commands.forEach((c, i) => {
       c._ord = i;
     });
@@ -545,7 +561,7 @@ export class ActionBankRunner {
     this.audio?.beginTimeline({ fps: FPS, stretch: 1 });
 
     this.lwf?.resetForReplay?.();
-    this.usm?.clearClips?.();
+    if (!this._timelineMoviesPrepared?.size) this.usm?.clearClips?.();
     this.activeEffects.clear();
     this.chara?.resetTransforms?.();
     this._movieSetupById = new Map();
@@ -588,7 +604,8 @@ export class ActionBankRunner {
 
     this._usmStartGate = true;
     this._paintHud();
-    void this._primeMoviesUpTo(0)
+    void this._resetPreparedTimelineMovies()
+      .then(() => this._primeMoviesUpTo(0))
       .then(() => this._prerollUsmLead(USM_LEAD_FRAMES))
       .catch((e) => this.log(`USM prime: ${e.message || e}`))
       .finally(() => {
@@ -703,12 +720,14 @@ export class ActionBankRunner {
     this.audio?.silence?.();
     const stepMul = this.highSpeed ? 2 : 1;
     try {
+      await this._primeMoviesUpTo(f);
       await this.usm?.seekToAbFrame?.(f, FPS, { accurate: !!accurateUsm });
     } catch {
 
     }
     try {
       this.lwf?.seekToAbFrame?.(f, { frameStepsPerAb: stepMul });
+      this._applyTimelineEffKeys(f);
     } catch {
 
     }
@@ -736,12 +755,14 @@ export class ActionBankRunner {
     this.snapCharaToScriptFrame(f);
     const stepMul = this.highSpeed ? 2 : 1;
     try {
+      await this._primeMoviesUpTo(f);
       await this.usm?.seekToAbFrame?.(f, FPS);
     } catch {
 
     }
     try {
       this.lwf?.seekToAbFrame?.(f, { frameStepsPerAb: stepMul });
+      this._applyTimelineEffKeys(f);
     } catch {
 
     }
@@ -873,21 +894,23 @@ export class ActionBankRunner {
       for (const mcmd of movieCmds) {
         const contentId = Number(mcmd.contentId);
         const setupFrame = Number(mcmd.frame) || 0;
+        if (Number.isFinite(mcmd.timelineEnd) && f >= mcmd.timelineEnd) continue;
         const paired = (this.commands || []).find(
           (c) =>
             (c.type === 'entryEffect' ||
               c.type === 'entryEffectAwaken' ||
               c.type === 'entryEffectTraining') &&
             Number(c.effectId) === contentId &&
-            (Number(c.frame) || 0) >= setupFrame,
+            (Number(c.frame) || 0) >= setupFrame &&
+            (!Number.isFinite(mcmd.timelineEnd) || c.frame < mcmd.timelineEnd),
         );
         let playCmd = mcmd;
         if (paired) {
           const entryFrame = Number(paired.frame) || 0;
           if (entryFrame > f) continue;
-          playCmd = { ...mcmd, frame: entryFrame, movieFrame: 0 };
+          playCmd = { ...mcmd, frame: entryFrame, movieFrame: (Number(mcmd.movieFrame) || 0) + entryFrame - setupFrame };
         }
-        if (Number.isFinite(contentId)) this._usmStartedIds.add(contentId);
+        if (Number.isFinite(contentId)) this._usmStartedIds.add(this._movieInstanceKey(mcmd));
         void this._setupMovie(playCmd)
           .then(() => {
             if (!this.playing) return;
@@ -1220,6 +1243,12 @@ export class ActionBankRunner {
 
     if (cancelled()) { clearInterval(ticker); return false; }
     this._refineKoTimelineFromPreparedEffect();
+    this._timelineMoviesPrepared = new Map();
+    for (const cmd of this.commands.filter(c => c.type === 'setupMovie' && Number.isFinite(c.timelineStart))) {
+      if (cancelled()) { clearInterval(ticker); return false; }
+      const clip = await this._prepareTimelineMovie(cmd);
+      if (clip) this._timelineMoviesPrepared.set(this._movieInstanceKey(cmd), clip);
+    }
     this._refineReactionTimelineFromPreparedEffects();
     if (this.koPreviewEnabled && this._hasCustomKoEffect) {
       const hasKoLwf = this._fxPrepared.has(Number(this._koEffectWorkId));
@@ -1600,6 +1629,7 @@ export class ActionBankRunner {
     }
   }
   _fireAt(frame) {
+    this.usm?.updateTimelineFrame?.(frame);
     this._maybeShowKoScreen(frame);
     const cmds = this.commands;
     while (this._cmdIndex < cmds.length) {
@@ -1621,7 +1651,7 @@ export class ActionBankRunner {
       this._exec(cmd);
       if (!this.playing) return;
       if (cmd.type === 'skipFrame') return;
-      if (cmd.type === 'setupMovie' && this._usmStartGate && !this._fastForwarding) {
+      if (this._usmStartGate && !this._fastForwarding) {
         this._parkCmdsUntilUsmReady(frame);
         return;
       }
@@ -1733,6 +1763,9 @@ export class ActionBankRunner {
       case 'stopMovie':
         this.usm?.stopAll?.();
         this.log(`stopMovie @ f${cmd.frame}`);
+        break;
+      case 'stopTimelineMovie':
+        this.usm?.retireTimelineClip?.(cmd.start);
         break;
       case 'pauseMovie': {
 
@@ -2122,7 +2155,7 @@ export class ActionBankRunner {
       imageMap,
       cacheTag: `${cmd.workId || 0}_${scene}_c${card?.art_id || 0}`,
       startPhase: 0,
-      startFrame: Number(cmd.frame) || 0,
+      startFrame: Number(cmd.sourceStart ?? cmd.frame) || 0,
       life: Number(cmd.life),
       lifeLimited: !!cmd.lifeLimited,
       effectId: Number(cmd.effectId) || 0,
@@ -2130,6 +2163,9 @@ export class ActionBankRunner {
       attr: Number(cmd.attr) || 0,
       dormant: true,
     });
+    player.timelineStart = cmd.timelineStart;
+    player.timelineEnd = cmd.timelineEnd;
+    if (Number.isFinite(cmd.timelineStart)) this.lwf?.primePlayerToAbFrame?.(player, cmd.frame);
     if (Number.isFinite(workKey)) this._fxPrepared.set(workKey, { player, pack, cmd, z });
     return true;
   }
@@ -2146,6 +2182,7 @@ export class ActionBankRunner {
         }
         return;
       }
+      this._maybeStartMovieForEffect(cmd.effectId, cmd.frame);
       const workKey = Number(cmd.workId);
       let prepared =
         Number.isFinite(workKey) && this._fxPrepared.has(workKey)
@@ -2203,7 +2240,7 @@ export class ActionBankRunner {
   _activatePreparedEffect(cmd, prepared) {
     const { player, pack, z } = prepared || {};
     if (!player?.lwf) return;
-    player.startFrame = Number(cmd.frame) || 0;
+    player.startFrame = Number(cmd.sourceStart ?? cmd.frame) || 0;
     player.life = Number(cmd.life);
     const isKoEffect =
       this.koPreviewEnabled && Number(cmd.workId) === Number(this._koEffectWorkId);
@@ -2229,15 +2266,17 @@ export class ActionBankRunner {
       player.parentScaleX = 1;
       player.parentScaleY = 1;
     }
-    this.lwf?.activatePlayer?.(player);
+    const primed = player.timelinePrimedFrame === this.frame;
+    this.lwf?.activatePlayer?.(player, { preserveFrame: primed });
+    player.timelinePrimedFrame = null;
 
     // Cropped effects can start before zero to preserve their progress at IN.
     // Seek only this player so other clips keep their current movie position.
-    if (Number(cmd.frame) < 0) {
+    if (!primed && player.startFrame < this.frame) {
       this.lwf?.seekPlayerToAbFrame?.(player, this.frame, FPS);
     }
 
-    this._applyDueEffKeys(cmd.workId, Number(cmd.frame) || 0);
+    this._applyDueEffKeys(cmd.workId, this.frame);
     this.lwf?.syncFollowParents?.(this.chara);
     const ps = Number(player.parentScaleX) || 1;
     const sx = Number(player.sx) || 1;
@@ -2283,24 +2322,70 @@ export class ActionBankRunner {
     if (bestRot) this.lwf?.setEffRotate?.(wid, bestRot.a);
     if (bestAlpha) this.lwf?.setEffAlpha?.(wid, bestAlpha.a);
   }
-  _getMovieSetup(contentId) {
+  _applyTimelineEffKeys(frame) {
+    for (const c of this.commands) {
+      if (Number.isFinite(c.timelineStart) && c.frame <= frame && frame < c.timelineEnd) {
+        this._applyDueEffKeys(c.workId, frame);
+      }
+    }
+  }
+  _getMovieSetup(contentId, atFrame = this.frame) {
     const id = Number(contentId);
     if (!Number.isFinite(id)) return null;
-    if (this._movieSetupById?.has(id)) return this._movieSetupById.get(id);
-    return (
-      (this.commands || []).find(
-        (c) => c.type === 'setupMovie' && Number(c.contentId) === id,
-      ) || null
-    );
+    return (this.commands || []).filter(c => c.type === 'setupMovie' && Number(c.contentId) === id
+      && c.frame <= atFrame && (!Number.isFinite(c.timelineEnd) || atFrame < c.timelineEnd))
+      .sort((a, b) => b.frame - a.frame)[0] || null;
+  }
+
+  _movieInstanceKey(cmd) {
+    return Number.isFinite(cmd.timelineStart) ? `${cmd.contentId}@${cmd.timelineStart}` : Number(cmd.contentId);
+  }
+
+  async _prepareTimelineMovie(cmd) {
+    const pack = this._moviesPrepared?.get(Number(cmd.contentId));
+    if (!pack?.usm?.rel || !this.usm?.prepareTimelineClip) return null;
+    const paired = this.commands.find(c => ['entryEffect', 'entryEffectAwaken', 'entryEffectTraining'].includes(c.type)
+      && c.effectId === cmd.contentId && c.frame >= cmd.frame && c.frame < cmd.timelineEnd);
+    const firstFrame = paired?.frame ?? cmd.frame;
+    return this.usm.prepareTimelineClip(pack.usm.rel, {
+      contentId: cmd.contentId, zIndex: movieZIndex(cmd.flagA),
+      startAbFrame: cmd.frame - (Number(cmd.movieFrame) || 0),
+      timelineStart: cmd.timelineStart, timelineEnd: cmd.timelineEnd, firstFrame,
+    });
+  }
+
+  async _resetPreparedTimelineMovies() {
+    for (const cmd of this.commands.filter(c => c.type === 'setupMovie' && Number.isFinite(c.timelineStart))) {
+      const key = this._movieInstanceKey(cmd);
+      let clip = this._timelineMoviesPrepared?.get(key);
+      if (!clip?.video) {
+        clip = await this._prepareTimelineMovie(cmd);
+        if (clip) this._timelineMoviesPrepared.set(key, clip);
+      } else {
+        await this.usm?.resetPreparedTimelineClip?.(clip);
+      }
+    }
+    this.usm?.updateTimelineFrame?.(0);
   }
 
   async _primeMoviesUpTo(abFrame) {
     const f = Math.max(0, Math.floor(Number(abFrame) || 0));
     const jobs = [];
+    this.usm?.updateTimelineFrame?.(f);
     for (const c of this.commands || []) {
       if (c?.type !== 'setupMovie') continue;
       const contentId = Number(c.contentId);
-      if (!Number.isFinite(contentId) || this._usmStartedIds.has(contentId)) continue;
+      const instanceKey = this._movieInstanceKey(c);
+      if (!Number.isFinite(contentId)) continue;
+      if (Number.isFinite(c.timelineStart)) {
+        if (f < c.timelineStart || f >= c.timelineEnd) continue;
+        const existing = this.usm?.clips?.find(clip => clip.contentId === contentId && clip.timelineStart === c.timelineStart);
+        if (existing) {
+          this.usm?.commitTimelineClip?.(existing);
+          this._usmStartedIds.add(instanceKey);
+          continue;
+        }
+      } else if (this._usmStartedIds.has(instanceKey)) continue;
       this._movieSetupById.set(contentId, c);
       const setupFrame = Number(c.frame) || 0;
       const paired = (this.commands || []).find(
@@ -2308,16 +2393,17 @@ export class ActionBankRunner {
           (e.type === 'entryEffect' ||
             e.type === 'entryEffectAwaken' ||
             e.type === 'entryEffectTraining') &&
-          Number(e.effectId) === contentId,
+          Number(e.effectId) === contentId && e.frame >= setupFrame &&
+          (!Number.isFinite(c.timelineEnd) || e.frame < c.timelineEnd),
       );
       const entryFrame = paired ? Number(paired.frame) || 0 : setupFrame;
       const playFrame = paired ? entryFrame : setupFrame;
       if (playFrame > f) continue;
-      this._usmStartedIds.add(contentId);
+      this._usmStartedIds.add(instanceKey);
       const playCmd = {
         ...c,
         frame: playFrame,
-        movieFrame: Number(c.movieFrame) || 0,
+        movieFrame: (Number(c.movieFrame) || 0) + playFrame - setupFrame,
       };
       this.log(
         `USM prime ${contentId} @f${playFrame}` +
@@ -2327,7 +2413,7 @@ export class ActionBankRunner {
     }
     if (!jobs.length) return;
     await Promise.all(jobs);
-    if (this.playing && this.pauseRemain <= 0 && !this.userPaused) {
+    if (this.usm) {
       this.usm?.setPlaybackRate?.(1);
       try {
         await this.usm?.seekToAbFrame?.(f - USM_LEAD_FRAMES, FPS);
@@ -2375,13 +2461,15 @@ export class ActionBankRunner {
     if (!Number.isFinite(contentId)) return;
     this._movieSetupById.set(contentId, cmd);
     const setupFrame = Number(cmd.frame) || 0;
+    const instanceKey = this._movieInstanceKey(cmd);
     const pairedSameOrLater = (this.commands || []).some(
       (c) =>
         (c.type === 'entryEffect' ||
           c.type === 'entryEffectAwaken' ||
           c.type === 'entryEffectTraining') &&
         Number(c.effectId) === contentId &&
-        (Number(c.frame) || 0) >= setupFrame,
+        (Number(c.frame) || 0) >= setupFrame &&
+        (!Number.isFinite(cmd.timelineEnd) || c.frame < cmd.timelineEnd),
     );
     if (pairedSameOrLater) {
       this.log(
@@ -2390,8 +2478,8 @@ export class ActionBankRunner {
       void this._warmMoviePack(contentId);
       return;
     }
-    if (this._usmStartedIds.has(contentId)) return;
-    this._usmStartedIds.add(contentId);
+    if (this._usmStartedIds.has(instanceKey)) return;
+    this._usmStartedIds.add(instanceKey);
     this._usmStartGate = true;
     this.log(`USM gate · hold @ f${setupFrame} until movie ready`);
     void this._runUsmStartGate(cmd);
@@ -2424,13 +2512,15 @@ export class ActionBankRunner {
   _maybeStartMovieForEffect(effectId, atFrame) {
     if (this._fastForwarding) return;
     const id = Number(effectId);
-    if (!Number.isFinite(id) || this._usmStartedIds.has(id)) return;
-    const setup = this._getMovieSetup(id);
+    if (!Number.isFinite(id)) return;
+    const setup = this._getMovieSetup(id, atFrame);
     if (!setup) return;
+    const instanceKey = this._movieInstanceKey(setup);
+    if (this._usmStartedIds.has(instanceKey)) return;
     const setupFrame = Number(setup.frame) || 0;
     const entryFrame = Number(atFrame) || 0;
     if (setupFrame > entryFrame) return;
-    this._usmStartedIds.add(id);
+    this._usmStartedIds.add(instanceKey);
     this.log(
       `USM play · entryEffect ${id} @f${entryFrame}` +
         (setupFrame !== entryFrame ? ` (setup was @f${setupFrame})` : ''),
@@ -2438,7 +2528,7 @@ export class ActionBankRunner {
     const playCmd = {
       ...setup,
       frame: entryFrame,
-      movieFrame: 0,
+      movieFrame: (Number(setup.movieFrame) || 0) + entryFrame - setupFrame,
     };
     this._usmStartGate = true;
     const gen = (this._usmGateGen = (this._usmGateGen || 0) + 1);
@@ -2522,6 +2612,15 @@ export class ActionBankRunner {
   }
 
   async _setupMovie(cmd, gateGen = this._usmGateGen) {
+    const prepared = this._timelineMoviesPrepared?.get(this._movieInstanceKey(cmd));
+    if (prepared?.video && prepared.preparedAtFrame === cmd.frame) {
+      if (gateGen != null && this._usmGateGen !== gateGen) return;
+      this.usm?.updateTimelineFrame?.(cmd.frame);
+      this.usm?.commitTimelineClip?.(prepared);
+      this.usm?.setAbPause?.(true);
+      this.usm?.setSyncPause?.(true);
+      return;
+    }
     const contentId = Number(cmd.contentId);
     let pack =
       this._moviesPrepared?.get?.(contentId) ||
@@ -2549,22 +2648,28 @@ export class ActionBankRunner {
       const atFrame = Number(cmd.frame) || 0;
       const movieFrame = Number(cmd.movieFrame) || 0;
       const startAbFrame = atFrame - movieFrame - USM_LEAD_FRAMES;
-      await this.usm.playFromAssetRel(pack.usm.rel, {
+      const clip = await this.usm.playFromAssetRel(pack.usm.rel, {
         zIndex: z,
         contentId,
         startAbFrame,
+        retainPrevious: Number.isFinite(cmd.timelineStart),
         isCancelled: () => gateGen != null && this._usmGateGen !== gateGen,
       });
+      if (clip) {
+        clip.timelineStart = cmd.timelineStart;
+        clip.timelineEnd = cmd.timelineEnd;
+      }
       if (gateGen != null && this._usmGateGen !== gateGen) return;
+      this.usm?.setPlaybackRate?.(1);
+      try {
+        await this.usm?.seekToAbFrame?.(atFrame, FPS);
+      } catch {
+
+      }
+      if (Number.isFinite(cmd.timelineStart)) this.usm?.commitTimelineClip?.(clip);
       if (this.userPaused || this.usm?.isRefLocked?.()) {
         this.usm?.lockAtCurrent?.();
         return;
-      }
-      this.usm?.setPlaybackRate?.(1);
-      try {
-        await this.usm?.seekToAbFrame?.(startAbFrame, FPS);
-      } catch {
-
       }
       this.usm?.setAbPause?.(true);
       this.usm?.setSyncPause?.(true);

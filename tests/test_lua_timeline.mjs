@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { inspectScript, joinClips, prepareCustomLua, CUSTOM_LUA_FORMATS, canPlaceCustomDamage } from '../web-ui/src/components/tabs/luaTimeline.js'
+import { inspectScript, joinClips, updateTimelineClip, removeTimelineClip, prepareCustomLua, CUSTOM_LUA_FORMATS, canPlaceCustomDamage } from '../web-ui/src/components/tabs/luaTimeline.js'
 import { createLuaHost } from '../components/lua_player/js/lua-host.js'
 import { installBinders } from '../components/lua_player/js/binders.js'
 import { ActionBankRunner } from '../components/lua_player/js/runner.js'
 import { LwfLayer } from '../components/lua_player/js/lwf-player.js'
 import { AudioBus } from '../components/lua_player/js/audio-bus.js'
+import { UsmLayer } from '../components/lua_player/js/usm-player.js'
 
 const require = createRequire(import.meta.url)
 globalThis.window = {}
@@ -16,6 +17,90 @@ globalThis.document = { hidden: false, addEventListener() {}, removeEventListene
 const fixture = name => readFileSync(new URL(`./fixtures/lua_timeline/${name}.lua`, import.meta.url), 'utf8')
 const fusion = fixture('fusion')
 const golden = fixture('golden_power')
+const nullifyGoku = fixture('nullify_goku')
+const activeGoku = fixture('active_goku')
+
+test('waiting and retired movie clocks stay fixed while only the active clip advances', () => {
+  const layer = Object.create(UsmLayer.prototype)
+  layer._playbackRate = 1
+  layer._applyClipPlayState = () => {}
+  layer._correctDrift = () => {}
+  const waiting = { video: { duration: 11 }, masterTime: 6.2, _timelineInactive: true }
+  const active = { video: { duration: 8 }, masterTime: 0 }
+  layer.clips = [active, waiting]
+  for (let i = 0; i < 353; i++) layer.syncMasterTimer(1 / 60)
+  assert.equal(waiting.masterTime, 6.2)
+  assert.ok(Math.abs(active.masterTime - 353 / 60) < 1e-9)
+  active._timelineInactive = true
+  waiting._timelineInactive = false
+  for (let i = 0; i < 60; i++) layer.syncMasterTimer(1 / 60)
+  assert.ok(Math.abs(waiting.masterTime - 7.2) < 1e-9)
+  assert.ok(Math.abs(active.masterTime - 353 / 60) < 1e-9)
+  active._abPaused = true
+  assert.equal(layer.isIntentionallyPaused(), false)
+  waiting._timelineInactive = true
+  assert.equal(layer.hasActiveClips(), false)
+})
+
+test('the reported Goku merge offsets the USM image and voice to the same source IN', () => {
+  const bank = run(joinClips([
+    { name: 'Nullify', content: nullifyGoku, startFrame: 0, inFrame: 0, outFrame: 352 },
+    { name: 'Active', content: activeGoku, startFrame: 353, inFrame: 372, outFrame: 656 }
+  ]))
+  const runner = new ActionBankRunner({ log() {} })
+  runner.commands = bank.commands
+  runner.prepare()
+  const movie = runner.commands.find(c => c.type === 'setupMovie' && c.contentId === 3315)
+  assert.deepEqual([movie.frame, movie.movieFrame, movie.timelineEnd], [353, 372, 638])
+  const effect = runner.commands.find(c => c.type === 'entryEffect' && c.effectId === 3315)
+  assert.deepEqual([effect.frame, effect.sourceStart], [353, -19])
+  assert.equal(runner.commands.find(c => c.type === 'playVoice' && c.cueId === 1238).frame, 419)
+  assert.ok(runner.commands.some(c => c.type === 'stopTimelineMovie' && c.frame === 353))
+})
+
+test('each occurrence of the same USM starts with its own source offset', async () => {
+  const runner = new ActionBankRunner({ log() {} })
+  runner.commands = [
+    { type: 'setupMovie', contentId: 3315, frame: 0, movieFrame: 100, timelineStart: 0, timelineEnd: 101 },
+    { type: 'setupMovie', contentId: 3315, frame: 101, movieFrame: 372, timelineStart: 101, timelineEnd: 202 }
+  ]
+  const starts = []
+  runner._setupMovie = async cmd => { starts.push([cmd.frame, cmd.movieFrame]) }
+  runner._maybeStartMovieForEffect(3315, 0)
+  await Promise.resolve()
+  runner._maybeStartMovieForEffect(3315, 101)
+  await Promise.resolve()
+  assert.deepEqual(starts, [[0, 100], [101, 372]])
+})
+
+test('a prepared movie switches at the boundary without opening or seeking a decoder', async () => {
+  const clip = { video: {}, preparedAtFrame: 353 }
+  const committed = []
+  const runner = new ActionBankRunner({ log() {}, usm: {
+    updateTimelineFrame() {}, commitTimelineClip(c) { committed.push(c) }, setAbPause() {}, setSyncPause() {},
+    playFromAssetRel() { assert.fail('decoder opened during the cut') },
+    seekToAbFrame() { assert.fail('decoder sought during the cut') }
+  } })
+  runner._timelineMoviesPrepared.set('3315@353', clip)
+  await runner._setupMovie({ contentId: 3315, frame: 353, timelineStart: 353, movieFrame: 372 })
+  assert.deepEqual(committed, [clip])
+})
+
+test('an outgoing video stays visible until the incoming IN frame is painted', () => {
+  const layer = Object.create(UsmLayer.prototype)
+  const old = { timelineStart: 4, timelineEnd: 353, preparedAtFrame: 4, visible: true, video: { paused: true, pause() {} }, wrap: { style: { visibility: 'visible' } } }
+  const next = { timelineStart: 353, timelineEnd: 638, preparedAtFrame: 353, visible: false, video: { paused: true, pause() {} }, wrap: { style: { visibility: 'hidden' } }, _lastOk: false }
+  layer.clips = [old, next]
+  layer.updateTimelineFrame(353)
+  assert.equal(old.wrap.style.visibility, 'visible')
+  assert.throws(() => layer.commitTimelineClip(next), /not been rendered/)
+  assert.equal(old.wrap.style.visibility, 'visible')
+  next._lastOk = true
+  layer.commitTimelineClip(next)
+  assert.equal(next.wrap.style.visibility, 'visible')
+  assert.equal(old.wrap.style.visibility, 'hidden')
+  assert.equal(layer.clips.length, 2)
+})
 
 function run(source, globals = {}) {
   const host = createLuaHost()
@@ -30,6 +115,104 @@ const clips = [
   { name: 'Fusion', content: fusion, startFrame: 0, inFrame: 0, outFrame: 448 },
   { name: 'Golden Power', content: golden, startFrame: 449, inFrame: 0, outFrame: 782 }
 ]
+
+test('editing IN and OUT shifts all following clips, and removing a clip closes the gap', () => {
+  const original = Array.from({ length: 4 }, (_, i) => ({ id: String(i), startFrame: i * 101, inFrame: 0, outFrame: 100 }))
+  const first = updateTimelineClip(original, '0', { outFrame: 49 })
+  assert.deepEqual(first.map(c => c.startFrame), [0, 50, 151, 252])
+  const second = updateTimelineClip(first, '1', { inFrame: 60 })
+  assert.deepEqual(second.map(c => c.startFrame), [0, 50, 91, 192])
+  assert.deepEqual(removeTimelineClip(second, '1').map(c => c.startFrame), [0, 50, 151])
+})
+
+test('four cuts of the same source preserve separate work IDs and bounded effects and fades', () => {
+  const content = `fx = entryEffect(0, 164063, 0x80, -1, 0, 0, 0)
+setEffAlphaKey(0, fx, 255)
+entryFadeBg(0, 0, 800, 0, 0, 0, 0, 255)
+playVoice(170, 1063)
+removeAllEffect(50)
+endPhase(800)`
+  const cuts = Array.from({ length: 4 }, (_, i) => ({ name: `cut-${i}`, content, startFrame: i * 101, inFrame: i * 100, outFrame: i * 100 + 100 }))
+  const bank = run(joinClips(cuts))
+  const runner = new ActionBankRunner({ log() {} })
+  runner.commands = bank.commands
+  runner.prepare()
+  const effects = runner.commands.filter(c => c.type === 'entryEffect')
+  assert.deepEqual(effects.map(c => c.frame), [0, 101, 202, 303])
+  assert.deepEqual(effects.map(c => c.sourceStart), [0, 1, 2, 3])
+  assert.equal(new Set(effects.map(c => c.workId)).size, 4)
+  assert.deepEqual(runner.commands.filter(c => c.type === 'endPhase').map(c => c.frame), [403])
+  assert.deepEqual(runner.commands.filter(c => c.type === 'entryFadeBg').map(c => [c.frame, c.hold]), [[0, 101], [101, 101], [202, 101], [303, 101]])
+  assert.equal(runner.commands.some(c => c.type === 'removeAllEffect'), false)
+  assert.deepEqual(runner.commands.filter(c => c.type === 'setEffAlphaKey' && c.frame === 50 && c.a === 0).map(c => c.workId), [effects[0].workId])
+  assert.deepEqual(runner.commands.filter(c => c.type === 'removeAllFadeBg').map(c => c.frame), [101, 202, 303])
+})
+
+test('four trimmed Fusion clips compile and queue each cut at its own IN boundary', () => {
+  const cuts = Array.from({ length: 4 }, (_, i) => ({ name: `Fusion-${i}`, content: fusion, startFrame: i * 150, inFrame: i * 150, outFrame: i * 150 + 149 }))
+  const bank = run(joinClips(cuts))
+  const runner = new ActionBankRunner({ log() {} })
+  runner.commands = bank.commands
+  runner.prepare()
+  for (const start of [0, 150, 300, 450]) {
+    assert.ok(runner.commands.some(c => c.type === 'entryEffect' && c.frame === start && c.timelineStart === start))
+  }
+  assert.equal(runner.maxFrame, 599)
+})
+
+test('cropped nested LWF movies execute to IN even when the outer movie has one frame', () => {
+  const layer = Object.create(LwfLayer.prototype)
+  let nestedFrame = 0
+  const movie = { totalFrames: 1, currentFrame: 1, gotoAndStop() {}, gotoAndPlay() { nestedFrame = 0 } }
+  const player = { timelineStart: 101, startFrame: 1, movie, lwf: {
+    frameRate: 30, rootMovie: movie, forceExecWithoutProgress() {}, exec() { nestedFrame++ }, render() {}
+  } }
+  layer.seekPlayerToAbFrame(player, 101, 60)
+  assert.equal(nestedFrame, 50)
+  assert.equal(player._holdingEnd, false)
+})
+
+test('scrubbing shows only the clip containing the selected frame and uses native LWF FPS', () => {
+  const layer = Object.create(LwfLayer.prototype)
+  const positions = []
+  layer._seekPlayerToElapsed = (p, frame) => positions.push([p.timelineStart, frame])
+  layer.activatePlayer = p => { p.dormant = false }
+  layer._softRetire = p => { p.dormant = true }
+  layer.players = [0, 101, 202].map(start => ({ timelineStart: start, timelineEnd: start + 101, startFrame: start - 100, dormant: true, lwf: { frameRate: 30 } }))
+  layer.seekToAbFrame(151, { frameStepsPerAb: 2 })
+  assert.deepEqual(positions, [[101, 75]])
+})
+
+test('a later clip seeks its effect to source IN and retires exactly after OUT', () => {
+  let seek
+  const layer = Object.create(LwfLayer.prototype)
+  layer.activatePlayer = () => {}
+  layer.seekPlayerToAbFrame = (p, frame) => { seek = [p.startFrame, frame] }
+  const runner = new ActionBankRunner({ log() {}, lwf: layer })
+  runner._maybeStartMovieForEffect = () => {}
+  runner.frame = 101
+  const player = { lwf: {}, timelineStart: 101, timelineEnd: 202 }
+  runner._activatePreparedEffect({ workId: 1, effectId: 164063, frame: 101, sourceStart: 1, life: -1 }, { player })
+  assert.deepEqual(seek, [1, 101])
+  seek = null
+  player.timelinePrimedFrame = 101
+  let preserved = false
+  layer.activatePlayer = (p, options) => { preserved = options.preserveFrame }
+  runner._activatePreparedEffect({ workId: 1, effectId: 164063, frame: 101, sourceStart: 1, life: -1 }, { player })
+  assert.equal(preserved, true)
+  assert.equal(seek, null)
+  layer.players = [player]
+  let retired = false
+  layer._softRetire = () => { retired = true }
+  layer.tickEffects(0, 202, 1 / 60)
+  assert.equal(retired, true)
+})
+
+test('a fade ending before IN is dropped rather than replayed over the joined clip', () => {
+  const source = 'entryFade(10, 2, 5, 2, 255, 255, 255, 255); endPhase(200)'
+  const bank = run(joinClips([{ name: 'cut', content: source, startFrame: 101, inFrame: 100, outFrame: 200 }]))
+  assert.equal(bank.commands.some(c => c.type === 'entryFade'), false)
+})
 
 test('parser maps assignment calls, one-argument endPhase and multiline calls', () => {
   for (const source of [fusion, golden]) {

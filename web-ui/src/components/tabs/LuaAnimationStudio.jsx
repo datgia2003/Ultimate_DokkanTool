@@ -4,7 +4,21 @@ import { Clapperboard, FileCode2, FolderPlus, Play, Pause, Scissors, Save, Trash
 import { AnimationChoice } from '../common/AnimationChoice'
 import { AnimationSearchFilter, AnimationRarityFilter, AnimationPagination } from '../common/AnimationBrowserControls'
 
-import { inspectScript, joinClips, CUSTOM_LUA_FORMATS, customLuaFilename, canPlaceCustomDamage, prepareCustomLua } from './luaTimeline'
+import { inspectScript, joinClips, updateTimelineClip, removeTimelineClip, CUSTOM_LUA_FORMATS, customLuaFilename, canPlaceCustomDamage, prepareCustomLua } from './luaTimeline'
+
+function FrameInput({ value, min = 0, max, onCommit }) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => { setDraft(String(value)) }, [value])
+  return <input type="number" min={min} max={max} step="1" value={draft}
+    onChange={event => setDraft(event.target.value)}
+    onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
+    onBlur={() => {
+      const parsed = draft.trim() ? Number(draft) : NaN
+      const frame = Number.isFinite(parsed) ? Math.max(min, Math.min(max ?? Infinity, Math.round(parsed))) : value
+      setDraft(String(frame))
+      if (frame !== value) onCommit(frame)
+    }} />
+}
 
 export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
   const vi = language !== 'en'
@@ -291,15 +305,15 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     if (loaded.length) { setSelectedId(loaded[0].id); setMessage('') }
   }
 
-  const patchSelected = changes => setClips(previous => previous.map(clip => clip.id === selected?.id ? { ...clip, ...changes } : clip))
+  const patchSelected = changes => setClips(previous => updateTimelineClip(previous, selected?.id, changes))
   const removeSelected = () => {
     if (!selected) return
-    const next = clips.filter(clip => clip.id !== selected.id)
+    const next = removeTimelineClip(clips, selected.id)
     setClips(next)
     setSelectedId(next[0]?.id || null)
   }
   const splitSelected = () => {
-    if (!selected) return
+    if (!selected || visibleFrame < selected.startFrame || visibleFrame >= selected.startFrame + selected.outFrame - selected.inFrame) return
     const localFrame = Math.round(selected.inFrame + Math.max(0, Math.min(selected.outFrame - selected.inFrame, visibleFrame - selected.startFrame)))
     if (localFrame >= selected.outFrame) return
     const left = { ...selected, outFrame: localFrame }
@@ -434,7 +448,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       {!animationSearchOpen && <button type="button" className="lua-action secondary" onClick={() => setAnimationSearchOpen(true)}><Search size={14} />{vi ? 'Tìm animation' : 'Find animations'}</button>}
       <button type="button" className="lua-action secondary" disabled={!previewAnimation?.script_path} onClick={() => window.dispatchEvent(new CustomEvent('dokkan:anim-player-control', { detail: { action: playerIsPlaying ? 'pause' : 'play' } }))}>{playerIsPlaying ? <Pause size={14} /> : <Play size={14} />}{playerIsPlaying ? (vi ? 'Tạm dừng player' : 'Pause player') : (vi ? 'Phát player' : 'Play player')}</button>
       <button type="button" className={`lua-action secondary ${followPlayer ? 'selected' : ''}`} onClick={() => { setFollowPlayer(value => !value); setSyncedFrame(null) }}><Radio size={14} />{vi ? 'Theo player' : 'Follow player'}</button>
-      <button type="button" className="lua-action secondary" disabled={!selected} onClick={splitSelected}><Scissors size={14} />{vi ? 'Cắt tại playhead' : 'Split at playhead'}</button>
+      <button type="button" className="lua-action secondary" disabled={!selected || visibleFrame < selected.startFrame || visibleFrame >= selected.startFrame + selected.outFrame - selected.inFrame} onClick={splitSelected}><Scissors size={14} />{vi ? 'Cắt tại playhead' : 'Split at playhead'}</button>
       <button type="button" className="lua-action secondary" disabled={!clips.length || !preparedExport.content?.trim() || Boolean(exportError) || busy || !card?.id} onClick={() => void previewScript()}><MonitorPlay size={14} />{busy ? (vi ? 'Đang nạp script…' : 'Loading script…') : (vi ? 'Nạp script ghép vào player' : 'Load merged script in player')}</button>
       <span className="lua-frame-readout"><Clock3 size={14} />{Math.round(visibleFrame)} / {totalFrames}f</span>
       <div className="lua-damage-controls lua-damage-toolbar">
@@ -480,10 +494,10 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
           {selectedInfo.unmapped?.length > 0 && <p className="lua-warning">{vi ? `${selectedInfo.unmapped.length} lệnh chưa xác định được frame. Cần sửa các biểu thức này trước khi ghép.` : `${selectedInfo.unmapped.length} calls have unresolved frames. Resolve these expressions before merging.`}</p>}
           {selected ? <><div className="lua-clip-fields">
             <label><span>{vi ? 'Tên đoạn' : 'Clip name'}</span><input value={selected.name} onChange={event => patchSelected({ name: event.target.value })} /></label>
-            <label><span>{vi ? 'Vị trí trên timeline' : 'Timeline start'}</span><input type="number" min="0" value={selected.startFrame} onChange={event => patchSelected({ startFrame: Math.max(0, Number(event.target.value) || 0) })} /></label>
-            <label><span>IN frame</span><input type="number" min="0" max={selected.outFrame} value={selected.inFrame} onChange={event => patchSelected({ inFrame: Math.max(0, Math.min(selected.outFrame, Number(event.target.value) || 0)) })} /></label>
-            <label><span>OUT frame</span><input type="number" min={selected.inFrame} value={selected.outFrame} onChange={event => patchSelected({ outFrame: Math.max(selected.inFrame, Number(event.target.value) || 0) })} /></label>
-          </div><textarea className="lua-source-editor" spellCheck="false" value={selected.content} onChange={event => patchSelected({ content: event.target.value })} /></> : null}
+            <label><span>{vi ? 'Vị trí trên timeline' : 'Timeline start'}</span><FrameInput key={`${selected.id}-start`} value={selected.startFrame} onCommit={startFrame => patchSelected({ startFrame })} /></label>
+            <label><span>IN frame</span><FrameInput key={`${selected.id}-in`} max={selected.outFrame} value={selected.inFrame} onCommit={inFrame => patchSelected({ inFrame })} /></label>
+            <label><span>OUT frame</span><FrameInput key={`${selected.id}-out`} min={selected.inFrame} value={selected.outFrame} onCommit={outFrame => patchSelected({ outFrame })} /></label>
+          </div><p className="lua-browser-hint">{vi ? 'IN/OUT là frame của Lua nguồn. Nhấn Enter hoặc rời ô để áp dụng; các clip phía sau tự dời theo thời lượng mới.' : 'IN/OUT use source Lua frames. Press Enter or leave the field to apply; later clips shift with the new duration.'}</p><textarea className="lua-source-editor" spellCheck="false" value={selected.content} onChange={event => patchSelected({ content: event.target.value })} /></> : null}
         </section>
       </div>
 

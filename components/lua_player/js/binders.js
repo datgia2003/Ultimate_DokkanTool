@@ -40,6 +40,9 @@ export const BIND_COMMAND_NAMES = [
   'setEffRotateKey',
   'setEffColorKey',
   'setEffAlphaKey',
+  'setTimelineEffectWindow',
+  'setTimelineMovieWindow',
+  'stopTimelineMovie',
   'setEffShake',
   'removeAllEffect',
   'setEffBlendColor',
@@ -368,6 +371,17 @@ export function installBinders(host, bank) {
   mark('setEffRotateKey', effKey('setEffRotateKey'));
   mark('setEffColorKey', effKey('setEffColorKey'));
   mark('setEffAlphaKey', effKey('setEffAlphaKey'));
+  mark('setTimelineEffectWindow', (L) => {
+    push({ type: 'setTimelineEffectWindow', frame: 0, workId: num(L, 1),
+      start: num(L, 2), end: num(L, 3), sourceStart: num(L, 4) });
+  });
+  mark('setTimelineMovieWindow', (L) => {
+    push({ type: 'setTimelineMovieWindow', frame: 0, contentId: num(L, 1),
+      start: num(L, 2), end: num(L, 3) });
+  });
+  mark('stopTimelineMovie', (L) => {
+    push({ type: 'stopTimelineMovie', frame: num(L, 1), start: num(L, 2) });
+  });
   mark('setEffShake', effKey('setEffShake'));
   mark('setEffBlendColor', effKey('setEffBlendColor'));
   mark('setEffReplaceTexture', (L) => {

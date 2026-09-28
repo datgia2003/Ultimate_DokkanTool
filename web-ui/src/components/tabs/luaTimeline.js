@@ -222,6 +222,26 @@ function namespaceGlobals(source, clipIndex) {
   return replaceRanges(source, edits)
 }
 
+export function updateTimelineClip(clips, id, changes) {
+  const old = clips.find(clip => clip.id === id)
+  if (!old) return clips
+  const updated = { ...old, ...changes }
+  const oldEnd = old.startFrame + old.outFrame - old.inFrame + 1
+  const newEnd = updated.startFrame + updated.outFrame - updated.inFrame + 1
+  const shift = newEnd - oldEnd
+  return clips.map(clip => clip.id === id ? updated
+    : clip.startFrame >= oldEnd ? { ...clip, startFrame: clip.startFrame + shift } : clip)
+}
+
+export function removeTimelineClip(clips, id) {
+  const removed = clips.find(clip => clip.id === id)
+  if (!removed) return clips
+  const duration = removed.outFrame - removed.inFrame + 1
+  const end = removed.startFrame + duration
+  return clips.filter(clip => clip.id !== id).map(clip => clip.startFrame >= end
+    ? { ...clip, startFrame: clip.startFrame - duration } : clip)
+}
+
 export function joinClips(clips) {
   const ordered = [...clips].sort((a, b) => a.startFrame - b.startFrame)
   if (!ordered.length) return ''
@@ -253,17 +273,38 @@ export function joinClips(clips) {
             if (stop == null) throw new Error(`${clip.name}:${node.loc.start.line}: không xác định được end frame của playSeVer2.`)
             args[3] = String(stop > 0 ? Math.min(boundary, Math.round(stop + offset)) : boundary)
           }
+          if (name === 'setupMovie') {
+            const movieFrame = numberValue(node.arguments[2], values) ?? 0
+            args[2] = String(movieFrame + Math.max(0, clip.inFrame - frame))
+            replacement = `__tl_movie(${name}, ${args.join(', ')})`
+          }
           if (name === 'entryEffectLife' || name === 'playSeLife') {
             const life = numberValue(node.arguments[2], values)
             if (life == null) throw new Error(`${clip.name}:${node.loc.start.line}: không xác định được life của ${name}.`)
             if (life > 0) args[2] = String(Math.min(life, clip.outFrame - frame + 1))
             if (life > 0 && frame + life <= clip.inFrame) replacement = '__tl_drop()'
           }
+          if (name === 'entryFade' || name === 'entryFadeBg') {
+            let skipped = Math.max(0, clip.inFrame - frame)
+            let remaining = boundary - Number(args[0])
+            for (let part = 1; part <= 3; part++) {
+              const length = numberValue(node.arguments[part], values)
+              if (length == null) throw new Error(`${clip.name}:${node.loc.start.line}: không xác định được thời lượng fade.`)
+              const consumed = Math.min(skipped, Math.max(0, length))
+              skipped -= consumed
+              const trimmed = Math.min(remaining, Math.max(0, length - consumed))
+              args[part] = String(trimmed)
+              remaining -= trimmed
+            }
+            if (frame < clip.inFrame && args.slice(1, 4).every(value => Number(value) === 0)) replacement = '__tl_drop()'
+          }
           if (!replacement && EFFECT_ENTRIES.has(name)) {
             // Preserve the effect's original start so the LWF can advance to
             // IN. Its alpha is gated until this clip actually becomes visible.
             args[0] = String(Math.round(frame + offset))
             replacement = `__tl_effect(${name}, ${args.join(', ')})`
+          } else if (!replacement && name === 'removeAllEffect') {
+            replacement = `__tl_remove_effects(${args[0]})`
           } else if (!replacement && SOUND_ENTRIES.has(name)) {
             replacement = `__tl_sound(${name}, ${args.join(', ')})`
           } else if (!replacement && name === 'playVoice') {
@@ -292,6 +333,7 @@ do
   local function __tl_effect(fn, frame, ...)
     local id = fn(frame, ...)
     __tl_effects[#__tl_effects + 1] = id
+    if setTimelineEffectWindow then setTimelineEffectWindow(id, ${clip.startFrame}, ${boundary}, frame) end
     if frame < ${clip.startFrame} then
       setEffAlphaKey(frame, id, 0)
       setEffAlphaKey(${clip.startFrame}, id, 255)
@@ -302,6 +344,13 @@ do
     local id = fn(...)
     __tl_sounds[#__tl_sounds + 1] = id
     return id
+  end
+  local __tl_has_movie = false
+  local function __tl_movie(fn, frame, content, movieFrame, ...)
+    __tl_has_movie = true
+    local result = fn(frame, content, movieFrame, ...)
+    if setTimelineMovieWindow then setTimelineMovieWindow(content, frame, ${boundary}) end
+    return result
   end
   local function __tl_voice(fn, frame, cue, ...)
     __tl_voices[cue] = true
@@ -315,6 +364,9 @@ do
     if id ~= nil and id ~= 0 then return fn(frame, id, ...) end
     return 0
   end
+  local function __tl_remove_effects(frame)
+    for _, id in ipairs(__tl_effects) do setEffAlphaKey(frame, id, 0) end
+  end
   if ENABLE_AUTO_TIME_STRETCH then ENABLE_AUTO_TIME_STRETCH(1) end
   local function __tl_run()
 ${body}
@@ -323,6 +375,11 @@ ${body}
   for _, id in ipairs(__tl_effects) do setEffAlphaKey(${boundary}, id, 0) end
   for _, id in ipairs(__tl_sounds) do stopSe(${boundary}, id) end
   for cue in pairs(__tl_voices) do stopVoice(${boundary}, cue) end
+  if __tl_has_movie then
+    if stopTimelineMovie then stopTimelineMovie(${boundary}, ${clip.startFrame}) else stopMovie(${boundary}) end
+  end
+  removeAllFade(${boundary})
+  removeAllFadeBg(${boundary})
 end`
   })
   const endFrame = Math.max(...ordered.map(clip => clip.startFrame + clip.outFrame - clip.inFrame))

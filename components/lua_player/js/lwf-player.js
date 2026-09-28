@@ -299,6 +299,10 @@ export class LwfLayer {
     for (const p of [...this.players]) {
       try {
         if (!p.lwf || p.expired || p.dormant) continue;
+        if (Number.isFinite(p.timelineEnd) && frame >= p.timelineEnd) {
+          this._softRetire(p);
+          continue;
+        }
 
         if (unpausableOnly && p.pausable !== false) continue;
         const startFrame = Number(p.startFrame) || 0;
@@ -338,7 +342,7 @@ export class LwfLayer {
           continue;
         }
         const isCutscene = p.attr === 0x100 || p.attr === 0x80 || p.isMovie || p.life < 0;
-        if (p.lifeLimited || (isCutscene && !LwfPlayer.disposeOnMovieEnd(p.effectId))) {
+        if (p.lifeLimited || (isCutscene && !LwfLayer.disposeOnMovieEnd(p.effectId))) {
           this._holdLastFrame(p);
           continue;
         }
@@ -571,13 +575,22 @@ export class LwfLayer {
     this._seekPlayerToElapsed(player, elapsed * lwfFps / abFps);
   }
 
+  primePlayerToAbFrame(player, frame) {
+    this.seekPlayerToAbFrame(player, frame);
+    this._softRetire(player);
+    player.timelinePrimedFrame = frame;
+  }
+
   seekToAbFrame(abFrame, { frameStepsPerAb = 1, force = false } = {}) {
     if (this._refLock && !force) return;
     const f = Number(abFrame);
     if (!Number.isFinite(f)) return;
-    const stepMul = Math.max(1, Math.round(Number(frameStepsPerAb) || 1));
     for (const p of this.players) {
       if (!p?.lwf || p.expired) continue;
+      if (Number.isFinite(p.timelineStart) && (f < p.timelineStart || f >= p.timelineEnd)) {
+        if (!p.dormant) this._softRetire(p);
+        continue;
+      }
       const start = Number(p.startFrame) || 0;
       const elapsedAb = Math.floor(f - start);
       if (elapsedAb < 0) {
@@ -599,7 +612,7 @@ export class LwfLayer {
         this.activatePlayer(p);
       }
 
-      const execFrames = Math.max(0, elapsedAb * stepMul);
+      const execFrames = Math.max(0, elapsedAb * (Number(p.lwf.frameRate) || 30) / 60);
       this._seekPlayerToElapsed(p, execFrames);
     }
   }
@@ -624,6 +637,7 @@ export class LwfLayer {
     if (!lwf) return;
     const m = p.movie || lwf.rootMovie;
     if (!m) return;
+    p.timelinePrimedFrame = null;
     const total = Math.max(1, Number(m.totalFrames) || 1);
     let elapsed = Math.max(0, Math.floor(Number(elapsedFrames) || 0));
     let target;
@@ -665,7 +679,10 @@ export class LwfLayer {
     this._flushLwf(lwf);
 
     let cur = Number(m.currentFrame);
-    if (!Number.isFinite(cur) || Math.abs(cur - target) > 1) {
+    // Jumping only the outer movie leaves nested movies at their first frame.
+    // Cropped timeline clips must execute the frames leading up to IN.
+    const replayNested = Number.isFinite(p.timelineStart);
+    if (replayNested || !Number.isFinite(cur) || Math.abs(cur - target) > 1) {
       try {
         if (typeof m.gotoAndPlay === 'function') m.gotoAndPlay(1);
         else if (typeof m.gotoFrame === 'function') m.gotoFrame(1);
@@ -675,7 +692,7 @@ export class LwfLayer {
           Number(lwf.tick) > 0
             ? Number(lwf.tick)
             : 1 / Math.max(1, Number(lwf.frameRate) || 30);
-        const hops = Math.min(Math.max(0, target - 1), 4000);
+        const hops = replayNested ? elapsed : Math.min(Math.max(0, target - 1), 4000);
         for (let i = 0; i < hops; i++) {
           lwf.exec?.(tick);
         }
@@ -687,7 +704,7 @@ export class LwfLayer {
       }
     }
 
-    const atEnd = (Number.isFinite(cur) ? cur : target) >= total;
+    const atEnd = total > 1 && (Number.isFinite(cur) ? cur : target) >= total;
     p._holdingEnd = atEnd && !p.lifeLimited;
     p._clipEnded = atEnd;
     p._lastClipFrame = Number.isFinite(cur) ? cur : target;
@@ -716,7 +733,7 @@ export class LwfLayer {
     }
   }
 
-  activatePlayer(p) {
+  activatePlayer(p, { preserveFrame = false } = {}) {
     if (!p) return;
     if (this._refLock) return;
     p.dormant = false;
@@ -751,8 +768,10 @@ export class LwfLayer {
     if (m) {
       m.active = true;
       m.playing = true;
-      if (typeof m.gotoAndPlay === 'function') m.gotoAndPlay(1);
-      else if (typeof m.gotoFrame === 'function') m.gotoFrame(1);
+      if (!preserveFrame) {
+        if (typeof m.gotoAndPlay === 'function') m.gotoAndPlay(1);
+        else if (typeof m.gotoFrame === 'function') m.gotoFrame(1);
+      }
     }
     try {
       p.lwf?.exec?.(0);
@@ -764,6 +783,12 @@ export class LwfLayer {
   resetForReplay() {
     for (const p of this.players) {
       try {
+        if (Number.isFinite(p.timelineStart)) {
+          const firstFrame = Math.max(p.timelineStart, p.startFrame);
+          if (p.timelinePrimedFrame !== firstFrame) this.primePlayerToAbFrame(p, firstFrame);
+          else this._softRetire(p);
+          continue;
+        }
         p.dormant = true;
         p.expired = false;
         p._clipEnded = false;

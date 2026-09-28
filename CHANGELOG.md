@@ -2,6 +2,25 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.2.1] - 2026-09-28
+
+### Sửa lỗi cắt và nối Lua Timeline
+
+- Đổi IN/OUT tự dời toàn bộ clip phía sau theo thời lượng mới; xóa clip sẽ khép khoảng trống.
+- Ô frame cho phép nhập trọn giá trị rồi áp dụng khi nhấn Enter hoặc rời ô, tránh nạp lại preview giữa lúc đang nhập.
+- Chỉ cho cắt tại playhead khi playhead nằm trong clip được chọn.
+- Player kích hoạt hiệu ứng tại đầu clip và chạy tới đúng trạng thái IN, gồm cả movie con trong LWF.
+- Chuẩn bị sẵn trạng thái LWF tại IN trong lúc nạp để tránh chạy bù nhiều frame ngay ở điểm nối.
+- Giới hạn hiển thị từng hiệu ứng theo IN/OUT; kéo thanh frame chỉ hiện clip chứa frame đó, tính đúng tốc độ khung hình của LWF.
+- Giới hạn lệnh xóa hiệu ứng trong clip hiện tại, cắt thời lượng fade và xóa lớp fade cuối clip để tránh ảnh hưởng đoạn sau.
+- Sửa lỗi tham chiếu lớp LWF khi hiệu ứng chạy hết, khiến việc giữ frame cuối bị lỗi.
+- Dời `setupMovie` tới đúng frame nguồn khi cắt IN, đồng bộ hình USM với chữ LWF và âm thanh.
+- Chuẩn bị và giải mã sẵn frame IN của từng movie trước khi phát; giữ hình đoạn trước tới khi hình đoạn sau sẵn sàng để tránh nháy đen ở điểm nối.
+- Giữ bộ đếm movie chờ tại IN, dừng bộ đếm khi qua OUT, tránh clip sau bị tính là hết video rồi đứng hình.
+- Mỗi lần dùng lại cùng movie có trạng thái riêng, hỗ trợ nhiều đoạn cắt từ cùng nguồn và phát lại timeline.
+- Thêm hồi quy bằng hai Lua Goku Nullify/Active được báo lỗi, kiểm tra offset movie/voice và đổi hình tại ranh giới clip.
+- Thêm hồi quy ghép bốn đoạn Fusion, đổi IN/OUT trong chuỗi bốn clip, movie con và ranh giới hiển thị.
+
 ## [1.0.2] - 2026-09-28
 
 ### Sửa lỗi Lua Timeline
