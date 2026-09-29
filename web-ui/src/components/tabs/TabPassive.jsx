@@ -1,10 +1,11 @@
 import { AnimationLookup } from '../common/AnimationLookup'
 import React, { useEffect, useState } from 'react'
-import { Zap, Sparkles, Plus, Trash2, AlertTriangle } from 'lucide-react'
+import { Zap, Sparkles, Plus, Trash2, AlertTriangle, Copy } from 'lucide-react'
 import { DokkanDescriptionEditor, DokkanDescriptionPreview } from '../common/DokkanDescriptionEditor'
 import { CausalityExpressionEditor } from '../common/CausalityExpressionEditor'
 import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
+import { copyEfficacyFields, PassiveEfficacyClonePicker } from './PassiveEfficacyClonePicker'
 
 const EXPECTED_COMPILER_VERSION = '2026-09-24.2'
 const TRANSFORM_EFFICACY_TYPES = new Set([79, 103, 131])
@@ -72,11 +73,12 @@ function conditionForLine(lines, index) {
   return ''
 }
 
-export function TabPassive({ passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {} }) {
+export function TabPassive({ passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {}, language = 'vi' }) {
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
   const [keepTransformEffects, setKeepTransformEffects] = useState(true)
+  const [cloneTargetIndex, setCloneTargetIndex] = useState(null)
   const currentSet = draft.passive_set !== undefined ? draft.passive_set : passive?.set
   const currentSkills = draft.passive_skills || passive?.skills || []
   const originalSkills = passive?.skills || []
@@ -143,18 +145,38 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
 
   const addBlank = () => {
     onChange('passive_set', currentSet)
+    const newIndex = currentSkills.length
     onChange('passive_skills', [...currentSkills, {
       _draftKey: `manual-${Date.now()}`, name: currentSet.name || 'Passive Skill',
       exec_timing_type: 1, exec_game_type: 0, target_type: 1, efficacy_type: 1,
       sub_target_type_set_id: 0, calc_option: 0, turn: 1, is_once: 0,
-      probability: 100, causality_conditions: '', eff_value1: 0,
-      eff_value2: 0, eff_value3: 0, efficacy_values: '{}'
+      probability: 100, causality_conditions: '', eff_value1: null,
+      eff_value2: null, eff_value3: null, efficacy_values: ''
     }])
+    setCloneTargetIndex(newIndex)
+  }
+
+  const applyClonedEfficacies = (sources) => {
+    const targetIndex = Number(cloneTargetIndex)
+    const target = currentSkills[targetIndex]
+    if (!target || !sources.length) return
+    const copied = sources.map((source, index) => copyEfficacyFields(
+      source, index === 0 ? target : {
+        _draftKey: `cloned-${Date.now()}-${index}`, name: currentSet.name || 'Passive Skill',
+        _sourceLineIndex: -1
+      }, index === 0 ? target._draftKey : `cloned-${Date.now()}-${index}`
+    ))
+    const updated = [...currentSkills]
+    updated.splice(targetIndex, 1, ...copied)
+    onChange('passive_skills', updated)
+    setCloneTargetIndex(null)
   }
 
   const removeSkill = (index) => {
     const target = currentSkills[index]
     onChange('passive_skills', currentSkills.filter((_, idx) => idx !== index))
+    if (cloneTargetIndex === index) setCloneTargetIndex(null)
+    else if (cloneTargetIndex > index) setCloneTargetIndex(cloneTargetIndex - 1)
     if (target?.id) {
       const deletedRows = draft.deleted_rows || []
       // A skill row may be shared by another set; removing it here only unlinks
@@ -288,6 +310,13 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
                     <Trash2 size={14} />
                   </button>
                 </div>
+                <div className="passive-efficacy-clone-trigger-row">
+                  <button type="button" className="btn secondary-btn" onClick={() => setCloneTargetIndex(cloneTargetIndex === idx ? null : idx)}>
+                    <Copy size={14} /> {cloneTargetIndex === idx ? 'Đóng tìm kiếm' : 'Tìm efficacy để sao chép'}
+                  </button>
+                </div>
+                {cloneTargetIndex === idx && <PassiveEfficacyClonePicker
+                  onClose={() => setCloneTargetIndex(null)} onCopy={applyClonedEfficacies} meta={meta} language={language} />}
                 <div className="efficacy-source-row">
                   <div className="efficacy-source-label">Dòng mô tả đối chiếu {lineIndex != null && matchConfidence === 'suggested' ? '· gợi ý, cần kiểm tra' : ''}</div>
                   <select value={lineIndex ?? ''} onChange={(e) => updateSkill(idx, '_sourceLineIndex', e.target.value === '' ? -1 : Number(e.target.value))}>

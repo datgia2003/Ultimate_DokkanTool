@@ -456,11 +456,11 @@ export function BgmPlayer({ accent = '#06d6a0', language = 'vi', onImportCustomB
           />
         </div>
       </div>
-      {trackNotice && <div className="bgm-track-notice" role="status" aria-live="polite" style={accentStyle}>
+      {trackNotice && createPortal(<div className="bgm-track-notice" role="status" aria-live="polite" style={accentStyle}>
         <span className="bgm-notice-icon"><Music2 size={17} /></span>
         <span className="bgm-notice-copy"><small>{vi ? 'ĐANG PHÁT' : 'NOW PLAYING'}</small><strong>{trackNotice.title}</strong></span>
         {!trackNotice.title.includes(`(BGM #${trackNotice.id})`) && <span className="bgm-notice-id">BGM #{trackNotice.id}</span>}
-      </div>}
+      </div>, document.body)}
       {importToast && createPortal(<div className={`custom-bgm-toast ${importToast.type}`} role="status" aria-live="polite" style={accentStyle}>
         <span className="custom-bgm-toast-icon">{importToast.type === 'success' ? <CheckCircle2 size={19} /> : <AlertCircle size={19} />}</span>
         <span className="custom-bgm-toast-copy"><strong>{importToast.title}</strong><small>{importToast.message}</small>

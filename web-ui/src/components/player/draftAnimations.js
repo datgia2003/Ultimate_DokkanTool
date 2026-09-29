@@ -8,9 +8,12 @@ export function draftAnimationReferences(cardData, draft) {
     if (Number(id) > 0) references.push({ slot, key, id: Number(id), name, move_tag, ...(bgm_id == null ? {} : { bgm_id }) })
   }
   if ('passive_skills' in draft || deleted.some(r => r.table === 'passive_skills')) {
-    replaceSlots.push('entrance')
+    replaceSlots.push('entrance', 'revival')
     ;(draft.passive_skills ?? cardData?.passive?.skills ?? []).forEach((row, i) => {
       if (alive('passive_skills', row)) add('entrance', `passive:${row.id ?? i}`, row.passive_skill_effect_id, row.name || 'Entrance / Passive Effect')
+      if (alive('passive_skills', row) && Number(row.efficacy_type) === 109) {
+        add('revival', `revival:${row.id ?? i}`, row.eff_value2, row.name || 'Revival', row.eff_value3, 'Revival')
+      }
     })
   }
   for (const slot of ['active', 'standby']) {

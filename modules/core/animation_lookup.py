@@ -116,14 +116,14 @@ def lookup_animations(slot, query='', rarity='', page=1, limit=24, search_by='ca
 
 def resolve_draft_animations(references, converted):
     """Resolve draft IDs for playback using read-only lookups, without applying SQL."""
-    slots = {'entrance': ('passive_skill_effect', 'pse'), 'active': ('active_skill', 'bs'),
+    slots = {'entrance': ('passive_skill_effect', 'pse'), 'revival': ('revival', 'rv'), 'active': ('active_skill', 'bs'),
              'super': ('attack_sp', 'sp'), 'standby': ('standby_skill', 'stb'), 'finish': ('finish_skill', 'fi')}
     custom = {}
     for item in converted:
         slot = item.get('target_slot')
         record_id = item.get('target_pse_id') if slot == 'entrance' else item.get('special_view_id')
         if slot in slots and record_id:
-            custom[('effect' if slot == 'entrance' else 'view', int(record_id))] = item
+            custom[('effect' if slot == 'entrance' else 'revival' if slot == 'revival' else 'view', int(record_id))] = item
     results = []
     used = set()
     for ref in references:
@@ -131,12 +131,16 @@ def resolve_draft_animations(references, converted):
         record_id = int(ref.get('id') or 0)
         if slot not in slots or record_id <= 0:
             continue
-        kind = 'effect' if slot == 'entrance' else 'view'
+        kind = 'effect' if slot == 'entrance' else 'revival' if slot == 'revival' else 'view'
         converted_item = custom.get((kind, record_id))
-        table = 'passive_skill_effects' if kind == 'effect' else 'special_views'
+        table = {'effect': 'passive_skill_effects', 'revival': 'revival_views', 'view': 'special_views'}[kind]
         row = converted_item or query_db_one(f'SELECT * FROM {table} WHERE id=?', (record_id,))
         folder, prefix = slots[slot]
         script = str((row or {}).get('script_name') or (f'{prefix}{record_id:04d}' if row else '')).removesuffix('.lua')
+        if slot == 'revival' and row and not row.get('script_name') and not converted_item:
+            pack = query_db_one('SELECT effect_pack_id FROM revival_views WHERE id=?', (record_id,))
+            if pack and pack.get('effect_pack_id'):
+                script = f"fx_{int(pack['effect_pack_id'])}"
         if converted_item:
             folder = slots[converted_item['target_slot']][0]
         used.add((kind, record_id))

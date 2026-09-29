@@ -2,6 +2,37 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.3] - 2026-09-29
+
+### Passive Skill và clone efficacy
+
+- Thêm công cụ sao chép Passive Skill Efficacy từ nhiều thẻ và nhiều dòng nguồn trong một lần thao tác.
+- Bộ tìm nguồn dùng giao diện Lua Timeline: tìm theo tên thẻ, ID hoặc tên chiêu; lọc rarity; phân trang và hiển thị ảnh thẻ.
+- Khi chọn thẻ nguồn, hiển thị `itemized_description` cùng các efficacy và value để đối chiếu.
+- Sao chép vào dòng đang chỉnh sẽ giữ ID và quan hệ của dòng đích; các efficacy chọn thêm được tạo thành dòng mới với ID được cấp khi lưu.
+- Dòng efficacy mới bắt đầu với các ô value để trống và mở sẵn công cụ tìm nguồn.
+
+### Player animation và OST
+
+- Nhận diện efficacy Revival (`109`) trong Passive draft; nạp animation từ `revival_views` và thay danh sách Entrance/Revival theo draft ngay khi chỉnh.
+- Cập nhật danh sách Character OST theo các BGM Entrance và Revival trong draft; loại track cũ của thẻ hiện tại khi efficacy bị thay hoặc gỡ.
+- Đưa thông báo bài đang phát xuống góc dưới bên trái và neo trực tiếp vào viewport để tránh bị bố cục trang đẩy lệch.
+
+### Giao diện
+
+- Chỉnh thanh tìm thẻ nguồn trong Clone Active Skill để ô nhập và bộ lọc nằm gọn trong panel, đồng bộ giao diện tối.
+
+## [1.0.2.2] - 2026-09-28
+
+### OST và visualizer
+
+- Thêm bộ lọc phát nhạc `All`, `Original` và `Custom`; phát ngẫu nhiên chỉ chọn các bài theo bộ lọc hiện tại.
+- Khôi phục danh sách OST khi mở tool lần đầu và thêm nhạc custom vào danh sách phát chung.
+- Giữ nhạc tiếp tục phát khi mở Lua Animation Editor hoặc quay lại màn hình nghe nhạc.
+- Đồng bộ dải sóng với tín hiệu âm thanh để các dải tần biến đổi độc lập theo từng đoạn nhạc; dừng hiệu ứng hình ảnh khi tab trình duyệt bị ẩn nhưng không dừng nhạc.
+- Cải thiện giao diện phòng nghe nhạc và bố cục thanh OST khi mở Lua Timeline.
+- Thêm cài đặt `cricode` tự động trong launcher.
+
 ## [1.0.2.3] - 2026-09-28
 
 ### Cải thiện giao diện và sửa lỗi

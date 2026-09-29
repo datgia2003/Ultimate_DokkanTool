@@ -3,9 +3,12 @@ import { createPortal } from 'react-dom'
 import { Disc3, Pause, Play, SlidersHorizontal, Volume2, ChevronDown, Search, Check } from 'lucide-react'
 import { api } from '../../api'
 import { createMusicSource } from '../../audio/musicSpectrum'
+import { draftAnimationReferences } from './draftAnimations'
 
-function collectTracks(cardData, draft, chainTracks) {
+function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = []) {
   const tracks = new Map()
+  const passiveDraftChanged = Object.prototype.hasOwnProperty.call(draft, 'passive_skills') ||
+    (draft.deleted_rows || []).some(row => ['passive_skills', 'passive_skill_set_relations'].includes(row.table))
   const currentCardId = cardData?.card?.id
     const currentCard = {
     id: currentCardId,
@@ -30,13 +33,21 @@ function collectTracks(cardData, draft, chainTracks) {
   }
   for (const track of chainTracks) {
     const draftOverridesCurrentEx = Number(track.card_id) === Number(currentCardId) && track.source_type === 'ex_super_attack' && draft.card_specials !== undefined
+    const draftOverridesCurrentPassiveOst = Number(track.card_id) === Number(currentCardId) && passiveDraftChanged &&
+      /^(entrance|revival) theme$/i.test(String(track.source || ''))
     const legacyLabel = track.label || ''
     const legacySeparator = legacyLabel.lastIndexOf(' · ')
     const legacySource = legacySeparator >= 0 ? legacyLabel.slice(legacySeparator + 3) : ''
     const trackCard = Number(track.card_id) === Number(currentCardId) ? { ...track, ...currentCard } : track
-    if (!draftOverridesCurrentEx) add(track.id, track.source || legacySource || 'Character Theme', trackCard)
+    if (!draftOverridesCurrentEx && !draftOverridesCurrentPassiveOst) add(track.id, track.source || legacySource || 'Character Theme', trackCard)
   }
-  for (const effect of cardData?.passive?.effects || []) add(effect.bgm_id, effect.script_name ? `Entrance Theme · ${effect.script_name}` : 'Entrance Theme')
+  if (!passiveDraftChanged) {
+    for (const effect of cardData?.passive?.effects || []) add(effect.bgm_id, effect.script_name ? `Entrance Theme · ${effect.script_name}` : 'Entrance Theme')
+  }
+  for (const animation of draftPassiveAnimations) {
+    const type = animation.type_key === 'revival' ? 'Revival Theme' : 'Entrance Theme'
+    add(animation.bgm_id, `${type}${animation.name ? ` · ${animation.name}` : ''}`)
+  }
   add((draft.active_set || cardData?.active?.set)?.bgm_id, 'Active Skill Theme')
   add((draft.standby_set || cardData?.standby?.set)?.bgm_id, 'Standby Theme')
   for (const [index, finish] of (draft.finish_skill_sets || cardData?.finish || []).entries()) {
@@ -52,10 +63,13 @@ function collectTracks(cardData, draft, chainTracks) {
 
 export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', language = 'vi' }) {
   const [chainOst, setChainOst] = useState({ cardId: null, items: [] })
+  const [draftPassiveOst, setDraftPassiveOst] = useState([])
   const chainTracks = chainOst.cardId === cardData?.card?.id ? chainOst.items : []
+  const draftPassiveReferences = useMemo(() => draftAnimationReferences(cardData, draft).references
+    .filter(reference => reference.slot === 'entrance' || reference.slot === 'revival'), [cardData, draft])
   const tracks = useMemo(() => {
-    return collectTracks(cardData, draft, chainTracks)
-  }, [cardData, draft, chainTracks])
+    return collectTracks(cardData, draft, chainTracks, draftPassiveOst)
+  }, [cardData, draft, chainTracks, draftPassiveOst])
   const [selectedTrackKey, setSelectedTrackKey] = useState(null)
   const [trackMenuOpen, setTrackMenuOpen] = useState(false)
   const [trackQuery, setTrackQuery] = useState('')
@@ -103,6 +117,18 @@ export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', langua
       .catch((err) => { if (err.name !== 'AbortError') setChainOst({ cardId, items: [] }) })
     return () => controller.abort()
   }, [cardData?.card?.id])
+
+  useEffect(() => {
+    if (!draftPassiveReferences.length) {
+      setDraftPassiveOst([])
+      return undefined
+    }
+    const controller = new AbortController()
+    api.resolveDraftAnimations({ references: draftPassiveReferences, converted: [] }, controller.signal)
+      .then(result => { if (!controller.signal.aborted) setDraftPassiveOst((result.items || []).filter(item => Number(item.bgm_id) > 0)) })
+      .catch(error => { if (error.name !== 'AbortError') setDraftPassiveOst([]) })
+    return () => controller.abort()
+  }, [draftPassiveReferences])
 
   useEffect(() => {
     if (!trackMenuOpen) return

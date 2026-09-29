@@ -501,6 +501,7 @@ export function App() {
                           metaError={metaError}
                           onReloadMeta={reloadMeta}
                           matches={passiveMatches}
+                          language={language}
                           onPlayAnim={() => setPlayerOpen(true)}
                         />
                       )}
