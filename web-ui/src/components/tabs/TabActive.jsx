@@ -7,8 +7,9 @@ import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 import { newDraftId } from '../../draftIds'
 import { SkillClone } from '../common/SkillClone'
+import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
 
-export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [] }) {
+export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam }) {
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
@@ -72,27 +73,59 @@ export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, tra
 
   const applyProposal = (replace) => {
     if (!proposal?.skills?.length) return
-    const generated = proposal.skills.map((sk, index) => ({
-      ...sk,
-      id: replace ? currentSkills[index]?.id : undefined,
-      _draftKey: `compiled-active-${Date.now()}-${index}`,
-      active_skill_set_id: currentSet.id
-    }))
+    const newBattleParamDrafts = []
+    const generated = proposal.skills.map((sk, index) => {
+      const draftKey = `compiled-active-${Date.now()}-${index}`
+      const next = {
+        ...sk,
+        id: replace ? currentSkills[index]?.id : undefined,
+        _draftKey: draftKey,
+        active_skill_set_id: currentSet.id
+      }
+      if (Number(sk.efficacy_type) === 103 && onAllocateBattleParam) {
+        const battleDraftKey = `active-transform-${draftKey}`
+        const paramNo = onAllocateBattleParam()
+        next.eff_val3 = paramNo
+        next._battle_param_draft_key = battleDraftKey
+        newBattleParamDrafts.push(makeBattleParamDraft(paramNo, battleDraftKey))
+      }
+      return next
+    })
     onChange('active_set', currentSet)
     onChange('active_skills', replace ? generated : [...currentSkills, ...generated])
+    if (newBattleParamDrafts.length) onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft, newBattleParamDrafts))
     if (replace) onChange('deleted_rows', [...(draft.deleted_rows || []),
       ...currentSkills.slice(generated.length).filter(sk => sk.id).map(sk => ({ table: 'active_skills', id: sk.id }))])
     setProposal(null)
   }
 
   const updateSkill = (index, key, val) => {
+    let addBattleParamDraft = null
+    let removeBattleParamKey = ''
     const updated = currentSkills.map((sk, idx) => {
       if (idx === index) {
-        return { ...sk, [key]: val === '' ? null : (isNaN(Number(val)) ? val : Number(val)) }
+        const value = val === '' ? null : (isNaN(Number(val)) ? val : Number(val))
+        if (key === 'efficacy_type' && Number(value) === 103 && Number(sk.efficacy_type) !== 103) {
+          const draftKey = `active-transform-${card?.id || 0}-${sk._draftKey || sk.id || idx}-${Date.now()}`
+          const paramNo = onAllocateBattleParam?.()
+          if (paramNo) {
+            addBattleParamDraft = makeBattleParamDraft(paramNo, draftKey)
+            return { ...sk, [key]: value, eff_val3: paramNo, _battle_param_draft_key: draftKey }
+          }
+        }
+        if (key === 'efficacy_type' && Number(value) !== 103 && Number(sk.efficacy_type) === 103 && sk._battle_param_draft_key) {
+          removeBattleParamKey = sk._battle_param_draft_key
+          return { ...sk, [key]: value, eff_val3: 0, _battle_param_draft_key: undefined }
+        }
+        return { ...sk, [key]: value }
       }
       return sk
     })
     onChange('active_skills', updated)
+    if (addBattleParamDraft || removeBattleParamKey) {
+      onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft,
+        addBattleParamDraft ? [addBattleParamDraft] : [], removeBattleParamKey || ''))
+    }
   }
 
   const updateSkillRaw = (index, key, val) => {
@@ -434,6 +467,8 @@ export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, tra
                       type="number"
                       value={sk.eff_val3 ?? 0}
                       onChange={(e) => updateSkill(idx, 'eff_val3', e.target.value)}
+                      disabled={Number(sk.efficacy_type) === 103 && Boolean(sk._battle_param_draft_key)}
+                      title={sk._battle_param_draft_key ? 'Auto-assigned unique battle parameter' : undefined}
                     />
                   </div>
                 </div>

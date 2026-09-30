@@ -9,7 +9,7 @@ import {
   syncTextureMetricsToImages,
   preloadPatchedCardImages,
   applyPreloadedCardImages,
-} from './texture-sync.js?v=eclipse22';
+} from './texture-sync.js?v=eclipse24';
 import { ensureLwfCanvasBlendModes } from './lwf-blend.js?v=dokkan2026_v30';
 import { enqueueLwfLoad, loadLwfWithRetry } from './lwf-load.js';
 import { cameraScaleFactor } from './tcb-keys.js?v=eclipse42';

@@ -80,6 +80,17 @@ function lookupImage(caches, filename) {
   const base = basename(filename);
   const baseNoExt = base.replace(/\.(png|jpe?g|webp|gif)$/i, '');
   const usable = (img) => img?.width > 16 && img?.height > 16;
+  if (/phrase/i.test(base)) {
+    // Phrase textures contain animation-specific dialogue and often share
+    // basenames. Read only this LWF's renderer cache; the global ResourceCache
+    // may hold the phrase from whichever animation loaded first.
+    for (const cache of caches.slice(0, 2)) {
+      if (usable(cache[filename])) return cache[filename];
+      if (usable(cache[base])) return cache[base];
+      if (usable(cache[baseNoExt])) return cache[baseNoExt];
+    }
+    return null;
+  }
   for (const cache of caches) {
     if (usable(cache[filename])) return cache[filename];
     if (usable(cache[base])) return cache[base];
@@ -445,6 +456,7 @@ export function applyPreloadedCardImages(lwf, preloaded, log = () => {}) {
     const fname = basename(tex.filename);
     const stub = stubKeyFromCardFilename(fname);
     if (!stub) continue;
+    if (stub === 'sp_phrase') continue;
     let img = preloaded.get(stub);
     if (!img && stub === 'character' && !preloaded.has('effect')) {
       img = preloaded.get('sp_cutin') || preloaded.get('cutin');

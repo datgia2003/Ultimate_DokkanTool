@@ -37,6 +37,32 @@ const TAB_ICONS = {
 }
 const EMPTY_DRAFT = {}
 
+function readDraftTransformationEdges(draftsByCard) {
+  const edges = []
+  for (const [sourceIdText, formDraft] of Object.entries(draftsByCard || {})) {
+    const sourceId = Number(sourceIdText)
+    if (!Number.isFinite(sourceId) || sourceId <= 0) continue
+    for (const skill of formDraft?.passive_skills || []) {
+      if (![79, 103, 131].includes(Number(skill.efficacy_type))) continue
+      const targetId = Number(skill.eff_value1)
+      if (targetId > 0 && targetId !== sourceId) edges.push({ sourceId, targetId })
+    }
+    for (const skill of formDraft?.active_skills || []) {
+      if (![79, 103].includes(Number(skill.efficacy_type))) continue
+      const targetId = Number(skill.eff_val1)
+      if (targetId > 0 && targetId !== sourceId) edges.push({ sourceId, targetId })
+    }
+    for (const skill of formDraft?.standby_skills || []) {
+      if (![79, 103].includes(Number(skill.efficacy_type))) continue
+      let values = skill.efficacy_values
+      try { values = Array.isArray(values) ? values : JSON.parse(values || '[]') } catch { values = [] }
+      const targetId = Number(Array.isArray(values) ? values[0] : 0)
+      if (targetId > 0 && targetId !== sourceId) edges.push({ sourceId, targetId })
+    }
+  }
+  return [...new Map(edges.map(edge => [`${edge.sourceId}:${edge.targetId}`, edge])).values()]
+}
+
 export function App() {
   const [importedMod, setImportedMod] = useState(null)
   const [importBusy, setImportBusy] = useState(false)
@@ -52,6 +78,8 @@ export function App() {
   const [meta, setMeta] = useState(null)
   const [metaError, setMetaError] = useState('')
   const [draftsByCard, setDraftsByCard] = useState({})
+  const [resolvedDraftTransformForms, setResolvedDraftTransformForms] = useState({})
+  const battleParamCursorRef = useRef(0)
   const [customSqlByCard, setCustomSqlByCard] = useState({})
   const [animationAssetsByCard, setAnimationAssetsByCard] = useState({})
   const [audioAssetsByCard, setAudioAssetsByCard] = useState({})
@@ -213,6 +241,14 @@ export function App() {
     setDraftsByCard((prev) => ({ ...prev, [selectedId]: { ...(prev[selectedId] || {}), [key]: value } }))
   }
 
+  const allocateBattleParam = () => {
+    const existingDraftParams = Object.values(draftsByCard).flatMap(formDraft =>
+      (formDraft?.battle_params_draft || []).map(row => Number(row.param_no) || 0))
+    const highWater = Math.max(Number(meta?.battle_param_max_no) || 0, battleParamCursorRef.current, ...existingDraftParams)
+    battleParamCursorRef.current = highWater + 1
+    return battleParamCursorRef.current
+  }
+
   const setCustomSql = (value) => {
     if (!selectedId) return
     setCustomSqlByCard((prev) => ({ ...prev, [selectedId]: value }))
@@ -308,7 +344,61 @@ export function App() {
   }
 
   const card = cardData?.card
-  const chain = cardData?.chain || []
+  const baseChain = cardData?.chain || []
+  const draftTransformEdges = useMemo(() => readDraftTransformationEdges(draftsByCard), [draftsByCard])
+  useEffect(() => {
+    if (!card?.id) return
+    setResolvedDraftTransformForms(prev => ({
+      ...prev,
+      [card.id]: { id: card.id, name: card.name, rarity: card.rarity, element: card.element }
+    }))
+  }, [card?.id, card?.name, card?.rarity, card?.element])
+  useEffect(() => {
+    setResolvedDraftTransformForms({})
+  }, [importedMod?.id])
+  useEffect(() => {
+    const knownIds = new Set(baseChain.map(form => Number(form.id)))
+    if (selectedId) knownIds.add(Number(selectedId))
+    const relatedIds = [...new Set(draftTransformEdges.flatMap(edge => [edge.sourceId, edge.targetId]))]
+      .filter(id => !knownIds.has(id) && !resolvedDraftTransformForms[id])
+    const missing = relatedIds
+    if (!missing.length) return undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      Promise.all(missing.map(id => api.getCard(id, controller.signal).then(result => ({ id, card: result.card })).catch(() => null)))
+        .then(results => {
+          if (controller.signal.aborted) return
+          const resolved = Object.fromEntries(results.filter(item => item?.card).map(({ id, card: target }) => [id, {
+            id, name: target.name || `Card #${id}`, rarity: target.rarity, element: target.element
+          }]))
+          if (Object.keys(resolved).length) setResolvedDraftTransformForms(prev => ({ ...prev, ...resolved }))
+        })
+    }, 250)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [baseChain, selectedId, draftTransformEdges, resolvedDraftTransformForms])
+  const chain = useMemo(() => {
+    const forms = [...baseChain]
+    if (card && !forms.some(form => Number(form.id) === Number(card.id))) forms.unshift(card)
+    let changed = true
+    let passes = 0
+    while (changed && passes++ < draftTransformEdges.length + 1) {
+      changed = false
+      for (const edge of draftTransformEdges) {
+        let sourceIndex = forms.findIndex(form => Number(form.id) === edge.sourceId)
+        let targetIndex = forms.findIndex(form => Number(form.id) === edge.targetId)
+        if (sourceIndex >= 0 && targetIndex < 0) {
+          const target = resolvedDraftTransformForms[edge.targetId] || { id: edge.targetId, name: `Card #${edge.targetId}` }
+          forms.splice(sourceIndex + 1, 0, target)
+          changed = true
+        } else if (targetIndex >= 0 && sourceIndex < 0) {
+          const source = resolvedDraftTransformForms[edge.sourceId] || { id: edge.sourceId, name: `Card #${edge.sourceId}` }
+          forms.splice(targetIndex, 0, source)
+          changed = true
+        }
+      }
+    }
+    return forms
+  }, [baseChain, card, draftTransformEdges, resolvedDraftTransformForms])
   const element = card ? getElementMeta(draft.element ?? card.element) : null
   const randomAccent = useMemo(() => ['#3a86ff', '#06d6a0', '#9d4edd', '#ff3366', '#ffbe0b'][Math.floor(Math.random() * 5)], [])
   const accent = element?.color || randomAccent
@@ -502,6 +592,7 @@ export function App() {
                           onReloadMeta={reloadMeta}
                           matches={passiveMatches}
                           language={language}
+                          onAllocateBattleParam={allocateBattleParam}
                           onPlayAnim={() => setPlayerOpen(true)}
                         />
                       )}
@@ -513,6 +604,7 @@ export function App() {
                           draft={draft}
                           onChange={handleDraftChange}
                           meta={meta}
+                          onAllocateBattleParam={allocateBattleParam}
                           onPlayAnim={() => setPlayerOpen(true)}
                         />
                       )}
@@ -561,6 +653,7 @@ export function App() {
                           onChange={handleDraftChange}
                           meta={meta}
                           card={card}
+                          onAllocateBattleParam={allocateBattleParam}
                           onPlayAnim={() => setPlayerOpen(true)}
                         />
                       )}

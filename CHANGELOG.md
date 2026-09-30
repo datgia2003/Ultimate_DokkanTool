@@ -2,6 +2,19 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.4.1] - 2026-09-30
+
+### Sửa lỗi phrase trong animation
+
+- Ngăn ảnh phrase chung của thẻ ghi đè lời thoại riêng trong các effect pack.
+- Giới hạn tra cứu texture phrase trong cache của LWF hiện tại để các animation không dùng nhầm text của nhau.
+- Truyền `special_name_no` theo từng animation khi phát preview.
+
+### Transformation và Battle Params
+
+- Tự cấp `param_no` Battle Params không trùng cho efficacy 103 mới ở Passive, Active và Standby.
+- Xuất các dòng Battle Params đi kèm patch và cập nhật danh sách form transformation ngay khi sửa đích biến hình.
+
 ## [1.0.4] - 2026-09-30
 
 ### Player animation

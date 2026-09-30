@@ -542,6 +542,30 @@ def get_card_animations(card_id):
                 "passive_skill_set_id": set_id,
                 "bgm_id": None,
             })
+
+        # A card may have several special views whose Lua scripts all request
+        # the same phrase texture slot. The phrase image belongs to a specific
+        # special-name variant, so keep that association with each animation
+        # for the player to decide whether it should be replaced.
+        special_view_ids = {
+            int(item["special_view_id"])
+            for item in anims
+            if item.get("special_view_id") is not None
+        }
+        if special_view_ids:
+            placeholders = ",".join("?" for _ in special_view_ids)
+            c.execute(
+                f"SELECT id, special_name_no FROM special_views WHERE id IN ({placeholders})",
+                tuple(special_view_ids),
+            )
+            phrase_variants = {
+                int(view_id): int(special_name_no or 0)
+                for view_id, special_name_no in c.fetchall()
+            }
+            for item in anims:
+                view_id = item.get("special_view_id")
+                if view_id is not None:
+                    item["special_name_no"] = phrase_variants.get(int(view_id), 0)
             
     except Exception as e:
         print(f"Error extracting animations for card {card_id}: {e}")

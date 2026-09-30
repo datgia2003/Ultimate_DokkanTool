@@ -130,7 +130,10 @@ export function makeCardTextureImageMap(baseUrl, card, extraRules = []) {
   const byStub = new Map();
 
   if (artId && textures) {
-    for (const key of ['character', 'effect', 'sp_cutin', 'cutin', 'sp_name', 'sp_phrase']) {
+    // Speech/phrase textures are part of the animation's dialogue. They must
+    // stay bound to the effect pack by default; replacing every phrase with
+    // the selected card's phrase makes unrelated animations repeat one line.
+    for (const key of ['character', 'effect', 'sp_cutin', 'cutin', 'sp_name']) {
       if (textures[key]?.url) byStub.set(key, textures[key].url);
     }
   }
@@ -138,11 +141,15 @@ export function makeCardTextureImageMap(baseUrl, card, extraRules = []) {
   for (const rule of extraRules || []) {
     if (rule?.filename) {
       const stub = REPLACE_SLOT[Number(rule.slot)] || stubKeyFromFilename(String(rule.filename));
+      // Phrase sheets are authored per animation/effect pack. The card's
+      // single sp_phrase image cannot safely replace them across all attacks.
+      if (stub === 'sp_phrase') continue;
       if (stub) byStub.set(stub, rule.filename);
       continue;
     }
     const stub = REPLACE_SLOT[Number(rule.slot)];
     const artKey = artKeyForKind(rule.kind);
+    if (stub === 'sp_phrase' || artKey === 'sp_phrase') continue;
     const url = artKey && textures[artKey]?.url ? textures[artKey].url : null;
     if (!url) continue;
     if (stub) byStub.set(stub, url);
@@ -206,7 +213,7 @@ export async function makeCardTextureImageMapAsync(baseUrl, card, extraRules = [
   const textures = { ...(card?.textures || {}) };
   const artId = card?.art_id;
 
-  const kinds = ['character', 'effect', 'bg', 'cutin', 'sp_cutin', 'sp_name', 'sp_phrase', 'circle'];
+  const kinds = ['character', 'effect', 'bg', 'cutin', 'sp_cutin', 'sp_name', 'circle'];
   const verified = {};
   await Promise.all(
     kinds.map(async (kind) => {
@@ -246,6 +253,7 @@ export async function makeCardTextureImageMapAsync(baseUrl, card, extraRules = [
 
   for (const rule of extraRules || []) {
     const artKey = artKeyForKind(rule.kind);
+    if (artKey === 'sp_phrase' || Number(rule.kind) === 5 || Number(rule.slot) === 4) continue;
     if (!artKey || !patched[artKey]) continue;
     const kindN = Number(rule.kind);
     if (

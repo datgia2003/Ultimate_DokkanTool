@@ -1052,7 +1052,9 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "calc_options": calc_option_dict,
                     "efficacy_types": efficacy_dict,
                     "efficacy_details": efficacy_details,
-                    "exec_timings": exec_timing_dict
+                    "exec_timings": exec_timing_dict,
+                    "battle_param_max_no": int(query_db_one(
+                        'SELECT COALESCE(MAX(param_no), 0) AS id FROM battle_params')['id']),
                 })
                 return
 

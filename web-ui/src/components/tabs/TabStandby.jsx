@@ -7,8 +7,9 @@ import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 import { newDraftId } from '../../draftIds'
 import { SkillClone } from '../common/SkillClone'
+import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
 
-export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [] }) {
+export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam }) {
   const currentSet = draft.standby_set !== undefined ? draft.standby_set : standby?.set
   const currentSkills = draft.standby_skills !== undefined ? draft.standby_skills : (standby?.skills || [])
   const [proposal, setProposal] = useState(null)
@@ -116,30 +117,79 @@ export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, t
 
   const applyProposal = (replace) => {
     if (!proposal?.skills?.length) return
-    const generated = proposal.skills.map((sk, index) => ({
-      ...sk,
-      id: replace ? currentSkills[index]?.id : undefined,
-      _draftKey: `compiled-standby-${Date.now()}-${index}`,
-      standby_skill_set_id: currentSet.id
-    }))
+    const newBattleParamDrafts = []
+    const generated = proposal.skills.map((sk, index) => {
+      const draftKey = `compiled-standby-${Date.now()}-${index}`
+      const next = {
+        ...sk,
+        id: replace ? currentSkills[index]?.id : undefined,
+        _draftKey: draftKey,
+        standby_skill_set_id: currentSet.id
+      }
+      if (Number(sk.efficacy_type) === 103 && onAllocateBattleParam) {
+        const battleDraftKey = `standby-transform-${draftKey}`
+        const paramNo = onAllocateBattleParam()
+        let values = []
+        try { values = Array.isArray(sk.efficacy_values) ? [...sk.efficacy_values] : JSON.parse(sk.efficacy_values || '[]') } catch { values = [] }
+        if (!Array.isArray(values)) values = []
+        while (values.length < 3) values.push(0)
+        values[2] = paramNo
+        next.efficacy_values = JSON.stringify(values)
+        next._battle_param_draft_key = battleDraftKey
+        newBattleParamDrafts.push(makeBattleParamDraft(paramNo, battleDraftKey))
+      }
+      return next
+    })
     onChange('standby_set', currentSet)
     onChange('standby_skills', replace ? generated : [...currentSkills, ...generated])
+    if (newBattleParamDrafts.length) onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft, newBattleParamDrafts))
     if (replace) onChange('deleted_rows', [...(draft.deleted_rows || []),
       ...currentSkills.slice(generated.length).filter(sk => sk.id).map(sk => ({ table: 'standby_skills', id: sk.id }))])
     setProposal(null)
   }
 
   const updateSkill = (index, key, val) => {
+    let addBattleParamDraft = null
+    let removeBattleParamKey = ''
     const updated = currentSkills.map((sk, idx) => {
       if (idx === index) {
+        const value = val === '' ? null : (isNaN(Number(val)) ? val : Number(val))
+        if (key === 'efficacy_type' && Number(value) === 103 && Number(sk.efficacy_type) !== 103) {
+          const draftKey = `standby-transform-${card?.id || 0}-${sk._draftKey || sk.id || idx}-${Date.now()}`
+          const paramNo = onAllocateBattleParam?.()
+          if (paramNo) {
+            let values = []
+            try {
+              values = Array.isArray(sk.efficacy_values) ? [...sk.efficacy_values] : JSON.parse(sk.efficacy_values || '[]')
+            } catch { values = [] }
+            if (!Array.isArray(values)) values = []
+            while (values.length < 3) values.push(0)
+            values[2] = paramNo
+            addBattleParamDraft = makeBattleParamDraft(paramNo, draftKey)
+            return { ...sk, [key]: value, efficacy_values: JSON.stringify(values), _battle_param_draft_key: draftKey }
+          }
+        }
+        if (key === 'efficacy_type' && Number(value) !== 103 && Number(sk.efficacy_type) === 103 && sk._battle_param_draft_key) {
+          removeBattleParamKey = sk._battle_param_draft_key
+          let values = []
+          try {
+            values = Array.isArray(sk.efficacy_values) ? [...sk.efficacy_values] : JSON.parse(sk.efficacy_values || '[]')
+          } catch { values = [] }
+          if (Array.isArray(values) && values.length > 2) values[2] = 0
+          return { ...sk, [key]: value, efficacy_values: JSON.stringify(values), _battle_param_draft_key: undefined }
+        }
         return {
           ...sk,
-          [key]: val === '' ? null : (isNaN(Number(val)) ? val : Number(val))
+          [key]: value
         }
       }
       return sk
     })
     onChange('standby_skills', updated)
+    if (addBattleParamDraft || removeBattleParamKey) {
+      onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft,
+        addBattleParamDraft ? [addBattleParamDraft] : [], removeBattleParamKey || ''))
+    }
   }
 
   const updateSkillRaw = (index, key, val) => {

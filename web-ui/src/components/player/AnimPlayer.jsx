@@ -246,6 +246,7 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
           args: {
             card_id: renderCardId,
             script_path: script,
+            special_name_no: displayedAnim?.special_name_no ?? 0,
             // The merged Lua draft overwrites a stable preview path. Include
             // its revision so the iframe bridge doesn't deduplicate a fresh
             // render just because the filename stayed the same.

@@ -6,6 +6,7 @@ import { CausalityExpressionEditor } from '../common/CausalityExpressionEditor'
 import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 import { copyEfficacyFields, PassiveEfficacyClonePicker } from './PassiveEfficacyClonePicker'
+import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
 
 const EXPECTED_COMPILER_VERSION = '2026-09-24.2'
 const TRANSFORM_EFFICACY_TYPES = new Set([79, 103, 131])
@@ -73,7 +74,7 @@ function conditionForLine(lines, index) {
   return ''
 }
 
-export function TabPassive({ passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {}, language = 'vi' }) {
+export function TabPassive({ passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {}, language = 'vi', onAllocateBattleParam }) {
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
@@ -104,8 +105,25 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
   )
 
   const updateSet = (key, value) => onChange('passive_set', { ...currentSet, [key]: value })
-  const updateSkill = (index, key, value) => onChange('passive_skills',
-    currentSkills.map((sk, idx) => idx === index ? { ...sk, [key]: value } : sk))
+  const updateSkill = (index, key, value) => {
+    const oldSkill = currentSkills[index]
+    let update = { [key]: value }
+    let addParams = []
+    let removeKey = ''
+    if (key === 'efficacy_type' && Number(value) === 103 && Number(oldSkill?.efficacy_type) !== 103) {
+      const draftKey = `passive-transform-${currentSet?.id || 0}-${oldSkill?._draftKey || oldSkill?.id || index}-${Date.now()}`
+      const paramNo = onAllocateBattleParam?.()
+      if (paramNo) {
+        update = { ...update, eff_value3: paramNo, _battle_param_draft_key: draftKey }
+        addParams = [makeBattleParamDraft(paramNo, draftKey)]
+      }
+    } else if (key === 'efficacy_type' && Number(value) !== 103 && Number(oldSkill?.efficacy_type) === 103 && oldSkill?._battle_param_draft_key) {
+      removeKey = oldSkill._battle_param_draft_key
+      update = { ...update, eff_value3: null, _battle_param_draft_key: undefined }
+    }
+    onChange('passive_skills', currentSkills.map((sk, idx) => idx === index ? { ...sk, ...update } : sk))
+    if (addParams.length || removeKey) onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft, addParams, removeKey))
+  }
 
   const compile = async () => {
     setCompiling(true)
@@ -124,18 +142,31 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
   const applyProposal = (replace) => {
     if (!proposal?.skills?.length || proposal.description !== description ||
         proposal.compiler_version !== EXPECTED_COMPILER_VERSION) return
-    const generated = proposal.skills.map((sk, index) => ({
-      ...sk, _draftKey: `compiled-${Date.now()}-${index}`,
-      name: currentSet.name || 'Passive Skill', exec_game_type: sk.exec_game_type ?? 0,
-      sub_target_type_set_id: sk.sub_target_type_set_id ?? 0,
-      efficacy_values: sk.efficacy_values ?? '{}'
-    }))
+    const newBattleParamDrafts = []
+    const generated = proposal.skills.map((sk, index) => {
+      const draftKey = `compiled-${Date.now()}-${index}`
+      const next = {
+        ...sk, _draftKey: draftKey,
+        name: currentSet.name || 'Passive Skill', exec_game_type: sk.exec_game_type ?? 0,
+        sub_target_type_set_id: sk.sub_target_type_set_id ?? 0,
+        efficacy_values: sk.efficacy_values ?? '{}'
+      }
+      if (Number(sk.efficacy_type) === 103 && onAllocateBattleParam) {
+        const battleDraftKey = `passive-transform-${draftKey}`
+        const paramNo = onAllocateBattleParam()
+        next.eff_value3 = paramNo
+        next._battle_param_draft_key = battleDraftKey
+        newBattleParamDrafts.push(makeBattleParamDraft(paramNo, battleDraftKey))
+      }
+      return next
+    })
     const preserve = keepTransformEffects && originalTransformSkills.length > 0
     const applied = replace && preserve
       ? mergePreservedTransformSkills(originalSkills, generated)
       : generated
     onChange('passive_set', currentSet)
     onChange('passive_skills', replace ? applied : [...currentSkills, ...generated])
+    if (newBattleParamDrafts.length) onChange('battle_params_draft', updateBattleParamDrafts(draft.battle_params_draft, newBattleParamDrafts))
     onChange('passive_replace_existing', replace)
     if (replace) {
       onChange('passive_keep_transform_effects', preserve)
@@ -372,6 +403,8 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
                         value={sk.eff_value3 ?? ''}
                         onChange={(e) => updateSkill(idx, 'eff_value3', e.target.value === '' ? null : Number(e.target.value))}
                         placeholder={details?.v3 || 'Value 3'}
+                        disabled={Number(sk.efficacy_type) === 103 && Boolean(sk._battle_param_draft_key)}
+                        title={sk._battle_param_draft_key ? 'Auto-assigned unique battle parameter' : undefined}
                       />
                     </div>
                   </div>

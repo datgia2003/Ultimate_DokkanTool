@@ -6,8 +6,8 @@ import {
   isCardFlashCutinId,
 } from './layers.js';
 import { rateFromCents } from './audio-bus.js';
-import { makeCardTextureImageMapAsync } from './card-resolve.js';
-import { LwfLayer } from './lwf-player.js?v=dokkan2026_v30';
+import { makeCardTextureImageMapAsync } from './card-resolve.js?v=eclipse24';
+import { LwfLayer } from './lwf-player.js?v=dokkan2026_v32';
 import { syncUsmAndLwf } from './usm-lwf-sync.js?v=eclipse61';
 
 const FPS = 60;

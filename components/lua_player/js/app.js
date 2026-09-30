@@ -10,8 +10,8 @@ import {
 import { initStage, setPhoneCrop, watchStageFit } from './stage.js?v=dokkan2026_v10';
 import { createLuaHost, ensureFengari } from './lua-host.js?v=dokkan2026_v10';
 import { installBinders } from './binders.js?v=dokkan2026_v10';
-import { ActionBankRunner } from './runner.js?v=dokkan2026_v30';
-import { LwfLayer } from './lwf-player.js?v=dokkan2026_v30';
+import { ActionBankRunner } from './runner.js?v=dokkan2026_v32';
+import { LwfLayer } from './lwf-player.js?v=dokkan2026_v32';
 import { UsmLayer } from './usm-player.js?v=dokkan2026_v30';
 import { CharaLayer } from './chara-layer.js?v=dokkan2026_v10';
 import { BattleBgLayer, ScreenFade } from './bg-layer.js?v=dokkan2026_v10';
@@ -19,7 +19,7 @@ import { AudioBus } from './audio-bus.js?v=dokkan2026_v16';
 import { ReferenceMode } from './reference-mode.js?v=dokkan2026_v10';
 import { StageRecorder } from './recorder.js?v=dokkan2026_v10';
 import { clearEffectPackCache } from './effect-pack.js?v=dokkan2026_v10';
-import { fetchCard, clearCardCache } from './card-resolve.js?v=dokkan2026_v10';
+import { fetchCard, clearCardCache } from './card-resolve.js?v=eclipse24';
 import { ensureLwfCanvasBlendModes } from './lwf-blend.js?v=dokkan2026_v30';
 import { exportSheetsZip, downloadBlob } from './sheet-export.js?v=dokkan2026_v10';
 

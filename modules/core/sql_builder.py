@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import re
+import json
 import shutil
 import datetime
 import sqlite3
@@ -266,6 +267,9 @@ def compile_character_sql(card_ctx, allocation_state=None):
         for td in card_ctx['transformation_descriptions']:
             lines.append(generate_sql_insert_or_replace("transformation_descriptions", td))
 
+    for row in card_ctx.get('_battle_params_compiled', []):
+        lines.append(generate_sql_insert_or_replace('battle_params', row))
+
     for table, rows in card_ctx.get('_cloned_skill_rows', {}).items():
         if table in CLONED_SKILL_TABLES:
             for row in rows:
@@ -432,6 +436,8 @@ def _merge_card_draft(card_ctx, card_id, changes, raw_sql, allocation_state=None
             card_ctx["card_specials"] = changes["card_specials"]
         if "transformation_descriptions" in changes:
             card_ctx["transformation_descriptions"] = changes["transformation_descriptions"]
+        if "battle_params_draft" in changes:
+            card_ctx["_battle_params_draft"] = changes["battle_params_draft"]
         for field_key in ('fields', 'field_active_relations', 'field_passive_relations'):
             if field_key in changes:
                 card_ctx[field_key] = changes[field_key]
@@ -472,6 +478,75 @@ def _allocate_passive_relations(contexts, allocation_state):
             owners[next_id] = owner
             if old_id > limit and owners.get(old_id) == owner:
                 ctx.setdefault('deleted_rows', []).append({'table': 'passive_skill_set_relations', 'id': old_id})
+
+
+def _allocate_battle_param_drafts(contexts, allocation_state):
+    """Allocate globally unique battle-param numbers and row IDs for new 103 effects."""
+    groups = []
+    used_param_nos = {int(row['param_no']) for row in query_db_all(
+        'SELECT DISTINCT param_no FROM battle_params') if int(row['param_no']) > 0}
+    max_param_no = max(used_param_nos, default=0)
+    next_row_id = allocation_state.get('next_battle_param_row_id')
+    if next_row_id is None:
+        next_row_id = int(query_db_one('SELECT COALESCE(MAX(id), 0) AS id FROM battle_params')['id'])
+
+    for context in contexts:
+        context['_battle_params_compiled'] = []
+        for group in context.get('_battle_params_draft', []):
+            key = str(group.get('draft_key') or '')
+            if not key:
+                continue
+            has_owner = any(
+                str(skill.get('_battle_param_draft_key') or '') == key
+                for skill in (context.get('passive_skills', []) + context.get('active_skills', []) + context.get('standby_skills', []))
+            )
+            if has_owner:
+                groups.append((context, group, key))
+
+    for context, group, key in groups:
+        requested = int(group.get('param_no') or 0)
+        # A requested value can collide with the DB if another edit/save happened
+        # after the UI loaded. Allocate a fresh high-water ID and update only the
+        # skill carrying this draft key.
+        param_no = requested
+        if param_no <= 0 or param_no in used_param_nos:
+            max_param_no = max(max_param_no, max(used_param_nos, default=0)) + 1
+            param_no = max_param_no
+        used_param_nos.add(param_no)
+        group['param_no'] = param_no
+
+        for skill in context.get('passive_skills', []):
+            if str(skill.get('_battle_param_draft_key') or '') == key:
+                skill['eff_value3'] = param_no
+        for skill in context.get('active_skills', []):
+            if str(skill.get('_battle_param_draft_key') or '') == key:
+                skill['eff_val3'] = param_no
+        for skill in context.get('standby_skills', []):
+            if str(skill.get('_battle_param_draft_key') or '') != key:
+                continue
+            try:
+                values = skill.get('efficacy_values')
+                values = values if isinstance(values, list) else json.loads(values or '[]')
+                if isinstance(values, list):
+                    while len(values) < 3:
+                        values.append(0)
+                    values[2] = param_no
+                    skill['efficacy_values'] = json.dumps(values, separators=(',', ':'))
+            except (TypeError, ValueError):
+                pass
+
+        for item in group.get('rows', []):
+            idx = int(item.get('idx', -1))
+            if idx < 0:
+                continue
+            next_row_id += 1
+            context['_battle_params_compiled'].append({
+                'id': next_row_id,
+                'param_no': param_no,
+                'idx': idx,
+                'value': int(item.get('value') or 0),
+            })
+    allocation_state['next_battle_param_row_id'] = next_row_id
 
 
 def _allocate_new_attack_rows(contexts, allocation_state):
@@ -664,6 +739,7 @@ def compile_character_chain_sql(card_id: int, changes: dict = None, raw_sql: str
                 row.update(shared_changes.get((table, int(row['id'])), {}))
     _allocate_new_attack_rows(contexts, allocation_state)
     _allocate_passive_relations(contexts, allocation_state)
+    _allocate_battle_param_drafts(contexts, allocation_state)
     # Resolve views after merging drafts: changing a bonus must not leave its
     # referenced view out of the patch while exporting only stock animations.
     for context in contexts:
