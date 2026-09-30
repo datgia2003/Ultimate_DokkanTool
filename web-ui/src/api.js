@@ -32,6 +32,7 @@ export const api = {
     return req(`/cards?${params.toString()}`, { signal })
   },
 
+  getEnemyCards: signal => req('/enemy-cards', { signal }),
   getCard: (id, signal) => req(`/cards/${id}`, { signal }),
   getChain: (id) => req(`/cards/${id}/chain`),
   resolveDraftAnimations: (payload, signal) => req('/animations/resolve-draft', {
@@ -51,6 +52,7 @@ export const api = {
   }),
   searchAnimationSources: (q, signal, options = {}) => req(`/animation-sources?${new URLSearchParams({ q, ...options })}`, { signal }),
   getLuaSource: (path, signal) => req(`/lua/source?${new URLSearchParams({ path })}`, { signal, cache: 'no-store' }),
+  refreshLuaSource: path => req(`/lua/source?${new URLSearchParams({ path, refresh: '1' })}`, { cache: 'no-store' }),
   transmuteAnimation: (payload) => req('/animations/transmute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

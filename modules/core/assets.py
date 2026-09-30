@@ -1564,8 +1564,9 @@ def _get_or_fetch_cached_asset_unlocked(rel_path, query_dict=None):
                 from tools import voice_manager
                 # Streamlit can keep an already-imported helper module alive
                 # across source reruns. Reload only legacy parser instances so
-                # the fixed ACB chain is picked up without requiring a restart.
-                if getattr(voice_manager, 'PARSER_VERSION', 0) < 4:
+                # refreshed JP bank parsing and cue maps are picked up without
+                # requiring a restart after the helper implementation changes.
+                if getattr(voice_manager, 'PARSER_VERSION', 0) < 5:
                     voice_manager = importlib.reload(voice_manager)
                 jp_file = voice_manager.extract_jp_voice(cue)
                 if jp_file and os.path.exists(jp_file):

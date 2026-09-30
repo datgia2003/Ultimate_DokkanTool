@@ -1057,6 +1057,22 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
 
             # 3. Card list with search & filters
+            if path == "/api/v2/enemy-cards":
+                enemy_cards = query_db_all("""
+                    SELECT c.id, c.name
+                    FROM cards c
+                    JOIN (
+                        SELECT lower(trim(name)) AS name_key, MAX(id) AS max_id
+                        FROM cards
+                        WHERE name IS NOT NULL AND trim(name) != ''
+                          AND (CAST(id AS TEXT) LIKE '1%' OR CAST(id AS TEXT) LIKE '4%')
+                        GROUP BY lower(trim(name))
+                    ) latest ON latest.max_id = c.id
+                    ORDER BY c.name COLLATE NOCASE, c.id DESC
+                """)
+                self.send_json({"items": enemy_cards})
+                return
+
             if path == "/api/v2/cards":
                 term = query.get("q", [""])[0].strip()
                 rarities_raw = query.get("rarities", [""])[0].strip()
@@ -1189,7 +1205,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                         or not re.fullmatch(r'[A-Za-z0-9_.-]+\.lua', parts[2]) or '..' in parts[2]):
                     self.send_json({'error': 'Đường dẫn Lua không hợp lệ.'}, 400)
                     return
-                ok, content, source = fetch_or_read_lua(parts[1], parts[2][:-4])
+                force_refresh = query.get('refresh', ['0'])[0] == '1'
+                ok, content, source = fetch_or_read_lua(parts[1], parts[2][:-4], force_refresh=force_refresh)
                 if not ok:
                     self.send_json({'error': source or 'Không tải được Lua.'}, 404)
                     return

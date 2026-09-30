@@ -3,6 +3,7 @@ import { Search, Flame, ChevronLeft, ChevronRight, Filter, PackageOpen, X, Setti
 import { RarityBadge, ElementBadge } from '../common/CardBadge'
 import { ELEMENT_TYPES, RARITY_MAP } from '../../types'
 import { api } from '../../api'
+import packageInfo from '../../../package.json'
 
 export function Sidebar({ selectedId, onSelectCard, isOpen, onToggle, importedCards, importedMod, onCloseMod, onImportMod, importBusy, importError, performanceMode, onPerformanceModeChange, language, onLanguageChange }) {
   const [query, setQuery] = useState('')
@@ -76,7 +77,7 @@ export function Sidebar({ selectedId, onSelectCard, isOpen, onToggle, importedCa
           <span>{isVi ? 'Bộ công cụ chỉnh sửa nhân vật' : 'Character modding suite'}</span>
         </div>
         <button type="button" className="sidebar-settings-btn" onClick={() => setSettingsOpen(true)} title={isVi ? 'Cài đặt' : 'Settings'} aria-label={isVi ? 'Cài đặt' : 'Settings'}><Settings size={16} /></button>
-        <span className="brand-version">LOCAL TOOL</span>
+        <span className="brand-version">v{packageInfo.version}</span>
       </div>
 
       {settingsOpen && <div className="settings-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>

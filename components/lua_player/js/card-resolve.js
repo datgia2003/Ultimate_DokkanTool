@@ -100,7 +100,12 @@ export function stubKeyFromFilename(filename) {
     .split('/')
     .pop()
     .toLowerCase();
-  if (!/(?:^|_)?card_/i.test(base)) return null;
+  // Card-art replacement applies only to texture files whose basename starts
+  // with `card_<id>_` (or `Images_card_<id>_`). Some effect textures embed a
+  // card ID later in their name, e.g. `Images_cutin_phrase_card_1034200_...`;
+  // treating those as card art replaces the dialogue phrase with the card's
+  // cut-in image.
+  if (!/^(?:images_)?card_\d+(?:[_-]|\.)/i.test(base)) return null;
   const s = base.replace(/^(?:images_)?card_\d+[_-]?/i, '').replace(/\.png$/i, '');
   if (s.includes('sp_cutin') || s.includes('spcutin')) return 'sp_cutin';
   if (s.includes('sp_name') || s.includes('spname')) return 'sp_name';
@@ -174,7 +179,7 @@ export function makeCardTextureImageMap(baseUrl, card, extraRules = []) {
     while (key.startsWith('/')) key = key.slice(1);
     const base = key.split('/').pop() || key;
 
-    if (/(?:^|_)?card_\d+/i.test(base) && artId) {
+    if (/^(?:images_)?card_\d+(?:[_-]|\.)/i.test(base) && artId) {
       const stub = stubKeyFromFilename(base);
       const url = stub && byStub.has(stub) ? byStub.get(stub) : null;
       const out = abs(url);

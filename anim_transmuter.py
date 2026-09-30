@@ -774,7 +774,7 @@ else end
     return script_name, target_path
 
 
-def fetch_or_read_lua(folder, script_name):
+def fetch_or_read_lua(folder, script_name, force_refresh=False):
     """
     Đọc file LUA từ thư mục local. Nếu local chưa có, tải tự động từ CDN Dokkan Eclipse.
     Trả về: (success: bool, content: str, path_or_err: str)
@@ -789,7 +789,37 @@ def fetch_or_read_lua(folder, script_name):
         generate_effect_pack_lua(int(clean_name[3:]))
         folder = "preview_fx"
         
-    local_path = imported_asset(f"lua/ab_script/{folder}/{clean_name}.lua") or os.path.join(BASE_RES_DIR, "ab_script", folder, f"{clean_name}.lua")
+    archive_path = f"lua/ab_script/{folder}/{clean_name}.lua"
+    imported_path = imported_asset(archive_path)
+    if force_refresh and imported_path:
+        return False, "", "Animation này đến từ mod ZIP đang mở; không ghi đè tài nguyên đã import."
+    if force_refresh and folder in {"custom_lua", "preview_fx"}:
+        return False, "", "Không thể tải lại Lua custom hoặc Lua preview được sinh cục bộ."
+
+    local_path = imported_path or os.path.join(BASE_RES_DIR, "ab_script", folder, f"{clean_name}.lua")
+
+    # Explicit refresh skips the local copy, fetches a clean CDN version, and
+    # replaces the cached file only after a successful non-empty response.
+    if force_refresh:
+        cdn_url = f"{CDN_LUA_BASE}/{folder}/{clean_name}.lua"
+        try:
+            resp = requests.get(cdn_url, headers={"User-Agent": USER_AGENT}, timeout=20)
+            content = resp.text
+            if (resp.status_code != 200 or not content.strip()
+                    or content.lstrip().lower().startswith(("<!doctype html", "<html"))):
+                return False, "", f"Không tải được Lua mới (HTTP {resp.status_code}): {cdn_url}"
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            temp_path = local_path + f".refresh-{threading.get_ident()}.tmp"
+            try:
+                with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                    f.write(content)
+                os.replace(temp_path, local_path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            return True, content, local_path
+        except Exception as e:
+            return False, "", f"Lỗi khi tải lại Lua từ CDN: {e}"
     
     # 1. Kiểm tra local
     if os.path.exists(local_path):

@@ -2743,6 +2743,17 @@ select:focus {
   outline: none;
 }
 
+.enemy-picker { position: relative; }
+.enemy-picker-input { width: 72px; font-family: 'JetBrains Mono', monospace; }
+.enemy-picker-menu { position: absolute; z-index: 80; top: calc(100% + 6px); right: 0; display: flex; flex-direction: column; width: min(260px, 70vw); max-height: 280px; overflow: hidden; padding: 5px; border: 1px solid var(--element-line, #31504e); border-radius: 9px; background: #101721; box-shadow: 0 12px 28px #0009; }
+.enemy-picker-search { flex: 0 0 auto; width: 100%; box-sizing: border-box; margin-bottom: 5px; padding: 7px 9px; border: 1px solid #293946; border-radius: 6px; color: #e1e9e8; background: #0c121a; font-size: 11px; outline: none; }
+.enemy-picker-search:focus { border-color: var(--accent); }
+.enemy-picker-options { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #385055 #101721; }
+.enemy-picker-menu button { display: block; width: 100%; padding: 7px 9px; overflow: hidden; border: 0; border-radius: 5px; color: #dce7e5; background: transparent; font: inherit; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.enemy-picker-menu button:hover, .enemy-picker-menu button[aria-selected="true"] { color: #fff; background: color-mix(in srgb, var(--accent, #00cc9b) 20%, #18232b); }
+.enemy-picker-state, .enemy-picker-hint { padding: 8px 9px; color: var(--muted, #82949a); font-size: 10px; }
+.enemy-picker-hint { border-top: 1px solid #24333b; }
+
 .tiny-pill {
   font-size: 10px;
   font-weight: 700;
@@ -4678,6 +4689,14 @@ select option, select optgroup { background: #111923; color: #e8edf5; }
 .seq-top strong { flex: 1; min-width: 0; }
 .seq-type { width: 54px; text-align: center; box-sizing: border-box; }
 .seq-badge { flex-shrink: 0; color: #a9ebe0; border: 1px solid #32615d; background: #14282b; }
+.seq-labels { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.seq-conditional { color: #c2b3ff; border-color: #55427e; background: #28203a; }
+.sequence-refresh-btn { display: grid; place-items: center; flex: 0 0 30px; align-self: center; width: 30px; height: 30px; padding: 0; border: 1px solid #263744; border-radius: 7px; color: #91a6b1; background: #121a23; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.category-refresh-btn { position: sticky; right: 0; z-index: 1; margin-left: auto; }
+.sequence-refresh-btn:hover:not(:disabled), .sequence-refresh-btn:focus-visible { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, #121a23); }
+.sequence-refresh-btn:disabled { opacity: .55; cursor: wait; }
+.sequence-refresh-btn.spinning svg { animation: sequence-refresh-spin .8s linear infinite; }
+@keyframes sequence-refresh-spin { to { transform: rotate(360deg); } }
 .domain-static-preview { position: relative; margin: 16px 0; padding: 12px; background: #080e16; border: 1px solid var(--line); border-radius: 10px; }
 .domain-static-preview > img { display: block; width: 100%; max-height: 480px; object-fit: contain; }
 .domain-image-worker { position: absolute; width: 1px; height: 1px; border: 0; opacity: 0; pointer-events: none; }
@@ -4995,7 +5014,6 @@ select option, select optgroup { background: #111923; color: #e8edf5; }
 .header-top .top-bgm-player { width: min(100%, 500px); max-width: 500px; padding-block: 5px; }
 
 @media (max-width: 1480px) {
-  .brand-version { display: none; }
   .bgm-vol-slider-inline { width: 38px; }
   .bgm-controls { gap: 3px; }
 }

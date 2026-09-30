@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
-  Play, Pause, Volume2, VolumeX, Gauge, RotateCcw, Film, AlertCircle, Swords, Zap, Sparkles, HeartPulse, Flame, Target, ChevronRight, ChevronLeft
+  Play, Pause, Volume2, VolumeX, Gauge, RotateCcw, RefreshCw, Film, AlertCircle, Swords, Zap, Sparkles, HeartPulse, Flame, Target, ChevronRight, ChevronLeft
 } from 'lucide-react'
 import { api, getModWorkspace } from '../../api'
 import { getElementMeta } from '../../types'
@@ -81,12 +81,25 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
   const [activeCategory, setActiveCategory] = useState('all')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [refreshingScript, setRefreshingScript] = useState('')
+  const [enemyCards, setEnemyCards] = useState([])
+  const [enemyPickerOpen, setEnemyPickerOpen] = useState(false)
+  const [enemyQuery, setEnemyQuery] = useState('')
+  const [enemyCardsLoading, setEnemyCardsLoading] = useState(false)
+  const [enemyVisibleLimit, setEnemyVisibleLimit] = useState(100)
+  const enemyCardsLoadedRef = useRef(false)
+  const enemyPickerRef = useRef(null)
 
   // Controls moved from sidebar inside iframe to top toolbar
   const [isPlaying, setIsPlaying] = useState(true)
   const [isHighSpeed, setIsHighSpeed] = useState(false)
   const [isSoundOn, setIsSoundOn] = useState(true) // Default sound ON as requested!
   const [enemyId, setEnemyId] = useState(1033701) // Default Saibaiman opponent
+  const filteredEnemyCards = useMemo(() => {
+    const query = enemyQuery.trim().toLocaleLowerCase()
+    return query ? enemyCards.filter(item => String(item.name || '').toLocaleLowerCase().includes(query)) : enemyCards
+  }, [enemyCards, enemyQuery])
+  const visibleEnemyCards = useMemo(() => filteredEnemyCards.slice(0, enemyVisibleLimit), [filteredEnemyCards, enemyVisibleLimit])
   const [koScreen, setKoScreen] = useState(true)
   const [voiceLang, setVoiceLang] = useState('ja')
   const [timelineSegment, setTimelineSegment] = useState(null)
@@ -133,6 +146,25 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
 
     return () => { active = false; controller.abort() }
   }, [card?.id])
+
+  useEffect(() => {
+    if (!enemyPickerOpen) return undefined
+    const closeOnOutsideClick = event => {
+      if (!enemyPickerRef.current?.contains(event.target)) {
+        setEnemyPickerOpen(false)
+        setEnemyQuery('')
+      }
+    }
+    const closePicker = () => { setEnemyPickerOpen(false); setEnemyQuery('') }
+    document.addEventListener('pointerdown', closeOnOutsideClick, true)
+    document.addEventListener('focusin', closeOnOutsideClick, true)
+    window.addEventListener('blur', closePicker)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick, true)
+      document.removeEventListener('focusin', closeOnOutsideClick, true)
+      window.removeEventListener('blur', closePicker)
+    }
+  }, [enemyPickerOpen])
 
   useEffect(() => {
     if (!card?.id || loadedCardId !== card.id) return
@@ -203,6 +235,7 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
   const renderCardId = editorMode ? (displayedAnim?.card_id || card?.id) : card?.id
   const isReactionAnim = displayedAnim?.type_key === 'counter' || displayedAnim?.type_key === 'nullify'
   const effectiveKoScreen = koScreen && !isReactionAnim
+  const selectedAnimRefreshable = /^ab_script\/(?:passive_skill_effect|active_skill|attack_sp|standby_skill|finish_skill|revival|attack_counter|ab_sys)\/[A-Za-z0-9_.-]+\.lua$/i.test(selectedAnim?.script_path || '')
 
   const triggerRender = () => {
     if (iframeRef.current?.contentWindow && script) {
@@ -216,7 +249,7 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
             // The merged Lua draft overwrites a stable preview path. Include
             // its revision so the iframe bridge doesn't deduplicate a fresh
             // render just because the filename stayed the same.
-            render_revision: editorMode ? (displayedAnim?.preview_revision || 0) : 0,
+            render_revision: displayedAnim?.preview_revision || 0,
             server_port: 8585,
             enemy_card_id: Number(enemyId) || 1033701,
             ko_preview: effectiveKoScreen,
@@ -256,6 +289,44 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
       type: "dokkan:control",
       action: "toggleSound"
     }, "*")
+  }
+
+  const handleRefreshAnimation = async item => {
+    if (!item?.script_path || refreshingScript) return
+    setRefreshingScript(item.script_path)
+    setError('')
+    try {
+      const refreshed = await api.refreshLuaSource(item.script_path)
+      if (!String(refreshed.text || '').trim()) throw new Error('Lua tải lại đang trống.')
+      setSelectedAnim({ ...item, preview_revision: Date.now() })
+    } catch (err) {
+      setError(err.message || 'Không tải lại được animation.')
+    } finally {
+      setRefreshingScript('')
+    }
+  }
+
+  const openEnemyPicker = async () => {
+    setEnemyQuery('')
+    setEnemyVisibleLimit(100)
+    setEnemyPickerOpen(true)
+    if (enemyCardsLoadedRef.current || enemyCardsLoading) return
+    setEnemyCardsLoading(true)
+    try {
+      const result = await api.getEnemyCards()
+      setEnemyCards(result.items || [])
+      enemyCardsLoadedRef.current = true
+    } catch (err) {
+      setError(err.message || 'Không tải được danh sách thẻ đối thủ.')
+    } finally {
+      setEnemyCardsLoading(false)
+    }
+  }
+
+  const chooseEnemy = item => {
+    setEnemyId(Number(item.id))
+    setEnemyQuery('')
+    setEnemyPickerOpen(false)
   }
 
   // Handle Voice Language change
@@ -408,17 +479,46 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
 
         <div className="dock-toolbar-group right">
           {/* Enemy Card ID Input */}
-          <div className="toolbar-item" title="Enemy Card ID">
+          <div className="toolbar-item enemy-picker" title="Enemy card" ref={enemyPickerRef}>
             <span className="tiny-label"><Swords size={11} /></span>
             <input
-              type="number"
-              className="tiny-input"
-              value={enemyId}
-              onChange={(e) => setEnemyId(Number(e.target.value) || 1033701)}
-              title="Enemy Card ID (Default 1033701 Saibaiman)"
-              min="1"
-              step="1"
+              type="text"
+              className="tiny-input enemy-picker-input"
+              value={String(enemyId)}
+              onFocus={() => void openEnemyPicker()}
+              onChange={event => {
+                const value = event.target.value
+                if (/^\d*$/.test(value)) setEnemyId(Number(value) || 1033701)
+              }}
+              title="Select enemy by name or enter card ID"
+              autoComplete="off"
+              aria-label={language === 'en' ? 'Enemy character name or card ID' : 'Tên nhân vật hoặc ID thẻ đối thủ'}
+              aria-expanded={enemyPickerOpen}
             />
+            {enemyPickerOpen && <div className="enemy-picker-menu" role="dialog" aria-label={language === 'en' ? 'Choose enemy character' : 'Chọn nhân vật địch'}>
+              <input className="enemy-picker-search" type="search" autoFocus value={enemyQuery}
+                placeholder={language === 'en' ? 'Search character name…' : 'Tìm tên nhân vật…'}
+                aria-label={language === 'en' ? 'Search character names' : 'Tìm tên nhân vật'}
+                onChange={event => { setEnemyQuery(event.target.value); setEnemyVisibleLimit(100) }}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') { setEnemyPickerOpen(false); setEnemyQuery('') }
+                  if (event.key === 'Enter' && filteredEnemyCards.length) chooseEnemy(filteredEnemyCards[0])
+                }} />
+              <div className="enemy-picker-options" role="listbox" onScroll={event => {
+                const node = event.currentTarget
+                if (node.scrollHeight - node.scrollTop - node.clientHeight < 48 && enemyVisibleLimit < filteredEnemyCards.length) {
+                  setEnemyVisibleLimit(limit => Math.min(filteredEnemyCards.length, limit + 100))
+                }
+              }}>
+                {enemyCardsLoading ? <div className="enemy-picker-state">{language === 'en' ? 'Loading characters…' : 'Đang tải danh sách…'}</div>
+                  : visibleEnemyCards.length ? visibleEnemyCards.map(item => <button type="button" role="option" key={item.id}
+                    aria-selected={Number(item.id) === Number(enemyId)} onMouseDown={event => event.preventDefault()}
+                    onClick={() => chooseEnemy(item)}>{item.name}</button>)
+                    : <div className="enemy-picker-state">{language === 'en' ? 'No matching characters' : 'Không tìm thấy nhân vật'}</div>}
+                {!enemyCardsLoading && !enemyQuery.trim() && enemyVisibleLimit < filteredEnemyCards.length &&
+                  <div className="enemy-picker-hint">{language === 'en' ? 'Scroll or search for more names' : 'Cuộn hoặc tìm để xem thêm tên'}</div>}
+              </div>
+            </div>}
           </div>
 
           {/* K.O. Cutscene Toggle */}
@@ -490,6 +590,12 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
               </button>
             )
           })}
+          <button type="button" className={`sequence-refresh-btn category-refresh-btn ${refreshingScript ? 'spinning' : ''}`}
+            title={language === 'en' ? 'Delete cached Lua and download the selected animation again' : 'Xóa Lua đã tải và tải lại animation đang chọn'}
+            aria-label={language === 'en' ? 'Refresh selected animation' : 'Tải lại animation đang chọn'}
+            disabled={!selectedAnimRefreshable || Boolean(refreshingScript)} onClick={() => void handleRefreshAnimation(selectedAnim)}>
+            <RefreshCw size={13} />
+          </button>
         </div>
 
         {/* Sequence List */}
@@ -506,8 +612,12 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
           ) : (
             filteredAnimations.map((item, idx) => {
               const isSelected = animationKey(selectedAnim) === animationKey(item)
+              const rawTag = animationTag(item)
+              const conditional = /\s*[·|]\s*Conditional\b/i.test(rawTag)
+              const mainTag = rawTag.replace(/\s*[·|]\s*Conditional\b/i, '').trim()
               return (
                 <button
+                  type="button"
                   key={`${animationKey(item)}_${idx}`}
                   className={`sequence-item ${isSelected ? 'active' : ''}`}
                   onClick={() => setSelectedAnim(item)}
@@ -516,11 +626,14 @@ export function AnimPlayer({ card, cardData, draft = EMPTY_DRAFT, convertedAnima
                   <div className="seq-icon">
                     <Play size={11} fill="currentColor" />
                   </div>
-                  <span className="seq-badge seq-type">{animationTag(item)}</span>
+                  <span className="seq-badge seq-type">{mainTag}</span>
                   <div className="seq-meta">
                     <div className="seq-top">
                       <strong>{item.title || item.name || `Move #${idx + 1}`}</strong>
-                      {item.badge && !/^content\s*script$/i.test(String(item.badge).trim()) && <span className="seq-badge">{item.badge}</span>}
+                      <span className="seq-labels">
+                        {conditional && <span className="seq-badge seq-conditional">Conditional</span>}
+                        {item.badge && !/^content\s*script$/i.test(String(item.badge).trim()) && <span className="seq-badge">{item.badge}</span>}
+                      </span>
                     </div>
                     <small>{item.script_path ? item.script_path.split('/').pop() : 'No script'}</small>
                   </div>

@@ -2,6 +2,20 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.4] - 2026-09-30
+
+### Player animation
+
+- Thêm nút tải lại Lua cho animation đang chọn; tài nguyên của mod ZIP và Lua custom được bảo vệ khỏi ghi đè.
+- Thêm danh sách chọn enemy theo tên, gộp nhân vật trùng tên và chọn ID nhân vật mới nhất bắt đầu bằng `1` hoặc `4`.
+- Sửa lỗi ảnh thẻ bị thay vào texture lời thoại trong animation; chỉ ánh xạ texture có tên bắt đầu đúng định dạng `card_<ID>`.
+- Tự làm mới ngân hàng voice Nhật từ CDN và tải lại AWB tương ứng khi ACB thay đổi.
+- Đưa tag Conditional sang cạnh tên chiêu để tránh tràn dòng.
+
+### Giao diện và phát hành
+
+- Hiển thị version hiện tại cạnh logo; version được lấy từ metadata của ứng dụng.
+
 ## [1.0.3] - 2026-09-29
 
 ### Passive Skill và clone efficacy

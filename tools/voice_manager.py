@@ -5,7 +5,7 @@ import threading
 import time
 import requests
 
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ACB_DIR = os.path.join(BASE_DIR, 'game res', 'audio', 'acb')
@@ -21,23 +21,43 @@ os.makedirs(VOICE_JP_DIR, exist_ok=True)
 os.makedirs(VOICE_EN_DIR, exist_ok=True)
 
 _JP_MAP = None
+_JP_MAP_REFRESHED_AT = 0
 _lock = threading.Lock()
 _bank_locks = {pkg: threading.Lock() for pkg in ('cv000000', 'cv001000', 'cv005000')}
 _retry_after = {}
+_updated_acb_packages = set()
+_JP_MAP_REFRESH_SECONDS = 6 * 60 * 60
 
 def _ensure_bank_file(pkg, extension):
-    """Fetch only the required JP bank, streaming to disk with an atomic rename."""
+    """Keep JP banks current, refreshing matching AWBs whenever an ACB changes."""
     folder = ACB_DIR if extension == 'acb' else AWB_DIR
     target = os.path.join(folder, f'{pkg}_jp.{extension}')
     with _bank_locks[pkg]:
-        if os.path.isfile(target) and os.path.getsize(target) > 32:
-            return target
+        local_ok = os.path.isfile(target) and os.path.getsize(target) > 32
         if time.monotonic() < _retry_after.get(target, 0):
-            return None
+            return target if local_ok else None
         os.makedirs(folder, exist_ok=True)
         temp = target + '.download'
+        url = f'https://cdn.dokkan-eclipse.com/uncompressed/voice/{pkg}/{pkg}.{extension}'
         try:
-            url = f'https://cdn.dokkan-eclipse.com/uncompressed/voice/{pkg}/{pkg}.{extension}'
+            must_refresh = not local_ok or (extension == 'acb') or (pkg in _updated_acb_packages)
+            if local_ok and extension == 'awb' and not must_refresh:
+                try:
+                    head = requests.head(url, timeout=(5, 10))
+                    head.raise_for_status()
+                    expected = int(head.headers.get('Content-Length') or 0)
+                    must_refresh = bool(expected and expected != os.path.getsize(target))
+                except requests.RequestException:
+                    # Keep using the valid local bank when CDN metadata is unavailable.
+                    return target
+            if not must_refresh:
+                return target
+
+            old_acb = b''
+            acb_changed = False
+            if extension == 'acb' and local_ok:
+                with open(target, 'rb') as source:
+                    old_acb = source.read()
             with requests.get(url, stream=True, timeout=(10, 30)) as response:
                 response.raise_for_status()
                 with open(temp, 'wb') as output:
@@ -47,14 +67,22 @@ def _ensure_bank_file(pkg, extension):
                 if expected and os.path.getsize(temp) != expected:
                     raise ValueError('Incomplete voice bank')
             with open(temp, 'rb') as source:
-                if source.read(4) != (b'@UTF' if extension == 'acb' else b'AFS2'):
+                magic = source.read(4)
+                if magic != (b'@UTF' if extension == 'acb' else b'AFS2'):
                     raise ValueError('Invalid voice bank')
+            if extension == 'acb':
+                with open(temp, 'rb') as source:
+                    acb_changed = old_acb != source.read()
             os.replace(temp, target)
+            if extension == 'acb' and acb_changed:
+                _updated_acb_packages.add(pkg)
+            if extension == 'awb':
+                _updated_acb_packages.discard(pkg)
             return target
         except (requests.RequestException, OSError, ValueError) as exc:
             _retry_after[target] = time.monotonic() + 30
             print(f'JP voice bank {pkg}: {exc}')
-            return None
+            return target if local_ok else None
         finally:
             if os.path.exists(temp):
                 os.remove(temp)
@@ -202,11 +230,11 @@ def _parse_acb_cue_table(acb_path):
         return {}
 
 def get_jp_cue_map():
-    global _JP_MAP
-    if _JP_MAP is not None:
+    global _JP_MAP, _JP_MAP_REFRESHED_AT
+    if _JP_MAP is not None and time.monotonic() - _JP_MAP_REFRESHED_AT < _JP_MAP_REFRESH_SECONDS:
         return _JP_MAP
     with _lock:
-        if _JP_MAP is not None:
+        if _JP_MAP is not None and time.monotonic() - _JP_MAP_REFRESHED_AT < _JP_MAP_REFRESH_SECONDS:
             return _JP_MAP
         mapping = {}
         complete = True
@@ -220,6 +248,7 @@ def get_jp_cue_map():
                 mapping[cid] = (pkg, widx)
         if complete:
             _JP_MAP = mapping
+            _JP_MAP_REFRESHED_AT = time.monotonic()
         return mapping
 
 def extract_jp_voice(cue_id):
