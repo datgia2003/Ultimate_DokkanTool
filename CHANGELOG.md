@@ -2,6 +2,14 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.1] - 2026-10-05
+
+### Tìm animation
+
+- Sửa tìm animation cùng loại ở Passive, Entrance, Active, Super Attack, Standby và Finish để kết quả luôn lấy từ database gốc.
+- Sửa tìm animation theo thẻ trong Lua Timeline và Anim Transfer; thao tác chuyển cũng đọc animation nguồn từ database gốc.
+- Tắt cache HTTP cho các truy vấn tìm animation để không hiện kết quả cũ.
+
 ## [1.0.5] - 2026-10-05
 
 ### Lua Animation Editor

@@ -1195,16 +1195,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             # 6. Card Animations
             if path == "/api/v2/animations/lookup":
                 from modules.core.animation_lookup import lookup_animations
-                self.send_json(lookup_animations(query.get('slot', ['entrance'])[0], query.get('q', [''])[0],
-                    query.get('rarity', [''])[0], query.get('page', [1])[0], query.get('limit', [24])[0],
-                    query.get('search_by', ['card_name'])[0]))
+                with use_workspace(None):
+                    results = lookup_animations(query.get('slot', ['entrance'])[0], query.get('q', [''])[0],
+                        query.get('rarity', [''])[0], query.get('page', [1])[0], query.get('limit', [24])[0],
+                        query.get('search_by', ['card_name'])[0])
+                self.send_json(results)
                 return
 
             if path == "/api/v2/animation-sources":
                 term = query.get("q", [""])[0].strip()
                 from modules.core.animation_lookup import search_animation_cards
-                self.send_json(search_animation_cards(term, query.get('rarity', [''])[0],
-                    query.get('page', [1])[0], query.get('limit', [24])[0], query.get('search_by', ['card_name'])[0]))
+                with use_workspace(None):
+                    results = search_animation_cards(term, query.get('rarity', [''])[0],
+                        query.get('page', [1])[0], query.get('limit', [24])[0], query.get('search_by', ['card_name'])[0])
+                self.send_json(results)
                 return
 
             if path == "/api/v2/lua/source":
@@ -1231,7 +1235,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/v2/cards/(\d+)/animations", path)
             if match:
                 card_id = int(match.group(1))
-                items = anim_transmuter.get_card_animations(card_id)
+                if query.get('source', [''])[0] == 'database':
+                    with use_workspace(None):
+                        items = anim_transmuter.get_card_animations(card_id)
+                else:
+                    items = anim_transmuter.get_card_animations(card_id)
                 normalized = []
                 for item in items:
                     value = dict(item)
@@ -1526,7 +1534,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                                      'type_key': 'custom', 'bgm_id': int(body.get('source_bgm_id') or 0)}]
                     anim_index = 0
                 else:
-                    source_items = anim_transmuter.get_card_animations(source_id)
+                    with use_workspace(None):
+                        source_items = anim_transmuter.get_card_animations(source_id)
                 if anim_index < 0 or anim_index >= len(source_items):
                     self.send_json({"error": "Không tìm thấy animation nguồn."}, 400)
                     return

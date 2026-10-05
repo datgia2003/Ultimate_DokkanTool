@@ -147,7 +147,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onAnim
     if (!selectedSourceCard?.id) return
     const controller = new AbortController()
     setLoadingSourceAnimations(true)
-    api.getAnimations(selectedSourceCard.id, controller.signal)
+    api.getSourceAnimations(selectedSourceCard.id, controller.signal)
       .then(data => { if (!controller.signal.aborted) setSourceAnimations(data.items || []) })
       .catch(error => { if (error.name !== 'AbortError') setLookupError(error.message) })
       .finally(() => { if (!controller.signal.aborted) setLoadingSourceAnimations(false) })

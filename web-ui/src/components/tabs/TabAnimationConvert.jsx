@@ -57,7 +57,7 @@ export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi
     setAnimationIndex('')
     if (!sourceId) return
     const controller = new AbortController()
-    api.getAnimations(sourceId, controller.signal)
+    api.getSourceAnimations(sourceId, controller.signal)
       .then((data) => setAnimations(data.items || []))
       .catch((err) => { if (err.name !== 'AbortError') setError(err.message) })
     return () => controller.abort()

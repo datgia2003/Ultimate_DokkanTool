@@ -17,7 +17,7 @@ async function req(path, options = {}) {
 export const api = {
   cloneSkill: (kind, sourceId, targetId) => req(`/skills/clone?${new URLSearchParams({ kind, source_id: sourceId, target_id: targetId })}`),
   importMod: file => req('/mods/import', { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file }),
-  lookupAnimations: (slot, q, signal, options = {}) => req(`/animations/lookup?${new URLSearchParams({ slot, q, ...options })}`, { signal }),
+  lookupAnimations: (slot, q, signal, options = {}) => req(`/animations/lookup?${new URLSearchParams({ slot, q, ...options })}`, { signal, cache: 'no-store' }),
   getHealth: () => req('/health'),
   getMeta: () => req('/meta'),
   getCardMemberships: signal => req('/card-memberships', { signal, cache: 'no-store' }),
@@ -39,6 +39,7 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal
   }),
   getAnimations: (id, signal) => req(`/cards/${id}/animations`, { signal }),
+  getSourceAnimations: (id, signal) => req(`/cards/${id}/animations?source=database`, { signal, cache: 'no-store' }),
   getCharacterOst: (id, signal) => req(`/cards/${id}/ost`, { signal }),
   importCustomBgm: (wav, title) => req('/custom-bgm/import', {
     method: 'POST', headers: { 'Content-Type': 'audio/wav', 'X-Audio-Title': encodeURIComponent(title || 'Custom OST') },
