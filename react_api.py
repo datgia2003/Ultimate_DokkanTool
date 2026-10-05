@@ -862,19 +862,15 @@ def compile_workspace_sql(card_id, changes, raw_sql):
     # Imported rows also need normalization when the user exports without edits.
     # This is the same chain compilation used for repairing an existing ZIP.
     pending.update(int(card['id']) for card in workspace['cards'])
+    pending.update(int(cid) for cid in changes.get('_form_chain_ids', []))
     pending.add(int(card_id))
     scoped_changes = {
+        '_form_chain_ids': list(dict.fromkeys([*changes.get('_form_chain_ids', []), *sorted(pending)])),
         '_form_drafts': {str(cid): drafts.get(str(cid), {}) for cid in pending},
         '_form_custom_sql': custom,
     }
-    covered = set()
     allocation_state = {}
-    for cid in [int(card_id), *sorted(pending - {int(card_id)})]:
-        if cid in covered:
-            continue
-        parts.append(compile_character_chain_sql(cid, scoped_changes, raw_sql if cid == card_id else '', allocation_state))
-        covered.update(row['id'] for row in get_card_chain_summary(cid))
-        covered.add(cid)
+    parts.append(compile_character_chain_sql(card_id, scoped_changes, raw_sql, allocation_state))
     return materialize_patch_sql('\n'.join(parts), workspace.get('base_db_path', DB_PATH))
 
 
@@ -1748,7 +1744,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if not card_id or not query_db_one("SELECT id FROM cards WHERE id = ?", (card_id,)):
                     self.send_json({"error": "Chọn thẻ hợp lệ trước khi xuất patch."}, 400)
                     return
-                chain_ids = [row["id"] for row in get_card_chain_summary(card_id)] or [card_id]
+                chain_ids = changes.get('_form_chain_ids') or [row["id"] for row in get_card_chain_summary(card_id)] or [card_id]
+                chain_ids = list(dict.fromkeys([int(cid) for cid in [*chain_ids, card_id,
+                    *[cid for cid, value in (changes.get('_form_drafts') or {}).items() if value],
+                    *[cid for cid, value in (changes.get('_form_custom_sql') or {}).items() if value],
+                    *(changes.get('_form_animation_assets') or {}), *(changes.get('_form_audio_assets') or {})]]))
                 if workspace:
                     chain_ids = list(dict.fromkeys(chain_ids + [c['id'] for c in workspace['cards']]
                         + [int(cid) for cid in (changes.get('_form_drafts') or {})]

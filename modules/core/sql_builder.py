@@ -726,7 +726,13 @@ def compile_character_chain_sql(card_id: int, changes: dict = None, raw_sql: str
     selected_raw_sql = form_custom_sql.get(str(card_id), raw_sql)
     _merge_card_draft(card_ctx, card_id, selected_changes, selected_raw_sql, allocation_state)
 
-    chain_ids = get_full_transformation_chain(card_id, card_ctx)
+    # Use the editing chain supplied by the UI: borrowed forms can belong to
+    # a different stock chain. Include every pending form so none is lost.
+    explicit_chain = (changes or {}).get('_form_chain_ids')
+    chain_ids = list(explicit_chain) if explicit_chain else get_full_transformation_chain(card_id, card_ctx)
+    chain_ids = list(dict.fromkeys([int(cid) for cid in [*(chain_ids or []), card_id,
+        *[cid for cid, value in form_drafts.items() if value],
+        *[cid for cid, value in form_custom_sql.items() if value]]]))
     if not chain_ids:
         chain_ids = [card_id]
 

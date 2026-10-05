@@ -107,10 +107,6 @@ export function App() {
     ...Object.entries(animationAssetsByCard).filter(([, value]) => value?.length).map(([id]) => id),
     ...Object.entries(audioAssetsByCard).filter(([, value]) => value?.length).map(([id]) => id)
   ]).size
-  const patchChanges = useMemo(() => ({
-    ...draft, _form_drafts: draftsByCard, _form_custom_sql: customSqlByCard,
-    _form_animation_assets: animationAssetsByCard, _form_audio_assets: audioAssetsByCard
-  }), [draft, draftsByCard, customSqlByCard, animationAssetsByCard, audioAssetsByCard])
   
   const [sidebarOpen, setSidebarOpen] = useState(true) // Sidebar open by default to select character
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('dokkan.performanceMode') === 'true')
@@ -331,7 +327,7 @@ export function App() {
     setImportError('')
     try {
       const result = await api.importMod(file)
-      baseWorkspaceRef.current = { selectedId, draftsByCard, customSqlByCard, animationAssetsByCard, audioAssetsByCard, latestAnimationByCard, convertedAnimationsByCard, activeTab }
+      baseWorkspaceRef.current = { selectedId, draftsByCard, customSqlByCard, animationAssetsByCard, audioAssetsByCard, latestAnimationByCard, convertedAnimationsByCard, activeTab, editingChainBaseline: chain }
       setModWorkspace(result.id)
       setImportedMod(result)
       setDraftsByCard({}); setCustomSqlByCard({}); setAnimationAssetsByCard({}); setAudioAssetsByCard({}); setLatestAnimationByCard({}); setConvertedAnimationsByCard({})
@@ -369,7 +365,7 @@ export function App() {
   }, [card?.id, card?.name, card?.rarity, card?.element])
   useEffect(() => {
     setResolvedDraftTransformForms({})
-    setEditingChainBaseline(null)
+    setEditingChainBaseline(importedMod ? null : (baseWorkspaceRef.current?.editingChainBaseline || null))
   }, [importedMod?.id])
   useEffect(() => {
     const knownIds = new Set(baseChain.map(form => Number(form.id)))
@@ -417,8 +413,13 @@ export function App() {
     if (card && !forms.some(form => Number(form.id) === Number(card.id))) forms.push(card)
     return forms
   }, [workspaceBaseChain, card, draftTransformEdges, resolvedDraftTransformForms])
+  const patchChanges = useMemo(() => ({
+    ...draft, _form_drafts: draftsByCard, _form_custom_sql: customSqlByCard,
+    _form_chain_ids: chain.map(form => Number(form.id)),
+    _form_animation_assets: animationAssetsByCard, _form_audio_assets: audioAssetsByCard
+  }), [draft, draftsByCard, customSqlByCard, chain, animationAssetsByCard, audioAssetsByCard])
   const selectChainForm = (id) => {
-    if (editingChainBaseline === null) setEditingChainBaseline(baseChain.length ? [...baseChain] : [{
+    if (editingChainBaseline === null) setEditingChainBaseline(chain.length ? [...chain] : [{
       id: card.id, name: card.name, rarity: card.rarity, element: card.element
     }])
     setSelectedId(id)
@@ -491,8 +492,8 @@ export function App() {
         onCloseMod={closeMod}
         selectedId={selectedId}
         onSelectCard={(id) => {
-          setEditingChainBaseline(null)
-          setSelectedId(id)
+          if (chain.some(form => Number(form.id) === Number(id))) selectChainForm(id)
+          else { setEditingChainBaseline(null); setSelectedId(id) }
           if (activeTab === 'lua-studio') setActiveTab('stats')
           setSidebarOpen(false)
         }}
@@ -520,6 +521,7 @@ export function App() {
         {card ? (
           <>
             <Header
+              draftsByCard={draftsByCard}
               card={card}
               ostAccent={accent}
               cardData={cardData}

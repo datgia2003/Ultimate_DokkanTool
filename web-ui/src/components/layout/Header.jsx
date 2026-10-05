@@ -13,6 +13,7 @@ export function Header({
   convertedAnimations = [],
   chain = [],
   draft = {},
+  draftsByCard = {},
   customSql = '',
   pendingFormCount = 0,
   hasAudioDraft = false,
@@ -117,13 +118,15 @@ export function Header({
             <div className="chain-nodes">
               {chain.map((node, index) => {
                 const isCurrent = node.id === card.id
+                const formDraft = isCurrent ? draft : (draftsByCard[node.id] || {})
+                const formName = formDraft.name ?? node.name
                 return <React.Fragment key={node.id}>
                   <button className={`chain-node ${isCurrent ? 'current' : ''}`}
-                    onClick={() => onSelectCard(node.id)} title={`Switch to: ${node.name} (#${node.id})`}>
+                    onClick={() => onSelectCard(node.id)} title={`Switch to: ${formName} (#${node.id})`}>
                     <img src={api.getThumbUrl(node.id, {
-                      element: isCurrent ? (draft.element ?? node.element) : node.element,
-                      rarity: isCurrent ? (draft.rarity ?? node.rarity) : node.rarity
-                    })} alt={node.name}
+                      element: formDraft.element ?? node.element,
+                      rarity: formDraft.rarity ?? node.rarity
+                    })} alt={formName}
                       onError={(e) => { e.currentTarget.style.display = 'none' }} />
                     <span className="node-text"><small>{index === 0 ? 'Base' : `Form ${index}`}</small><strong>#{node.id}</strong></span>
                   </button>

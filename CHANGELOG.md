@@ -2,6 +2,14 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.3] - 2026-10-05
+
+### Transformation chain và xuất patch
+
+- Giữ chain form hiện tại khi chuyển giữa các thẻ liên quan trong sidebar.
+- Đưa danh sách form chain và toàn bộ form có bản nháp vào dữ liệu xuất patch, để thay đổi ở form trước không bị bỏ sót khi đang mở form khác.
+- Bổ sung các form này vào phần gom SQL và tài nguyên khi xuất mod workspace.
+
 ## [1.0.5.2] - 2026-10-05
 
 ### Anim Transfer và Lua Timeline
