@@ -609,6 +609,7 @@ export function App() {
                     <>
                       {activeTab === 'lua-studio' && (
                         <LuaAnimationStudio card={card} language={language} onNavigateBack={() => setActiveTab('stats')}
+                          transferredAnimations={convertedAnimationsByCard[card.id] || []}
                           onAnimationTransferred={recordCustomAnimationTransfer}
                           editorMode={luaEditorMode}
                           onToggleEditorMode={() => setLuaEditorMode(value => !value)}
@@ -667,6 +668,7 @@ export function App() {
                       )}
                       {activeTab === 'animation-convert' && (
                         <TabAnimationConvert key={card.id} card={card} language={language} latestResult={latestAnimationByCard[card.id]}
+                          results={convertedAnimationsByCard[card.id] || []}
                           onDone={(result) => {
                             setConvertedAnimationsByCard(prev => ({ ...prev, [card.id]: [...(prev[card.id] || []), result] }))
                             setLatestAnimationByCard((prev) => ({ ...prev, [card.id]: result }))

@@ -3,7 +3,7 @@ import { ArrowRightLeft, RefreshCw, Copy, MonitorPlay } from 'lucide-react'
 import { api } from '../../api'
 import { BgmCardLookup } from './BgmCardLookup'
 
-export function CustomLuaTransfer({ card, onDone, refreshKey, onPreview, canPreview }) {
+export function CustomLuaTransfer({ card, onDone, results = [], refreshKey, onPreview, canPreview }) {
   const [items, setItems] = useState([])
   const [filename, setFilename] = useState('')
   const [slot, setSlot] = useState('active')
@@ -34,7 +34,7 @@ export function CustomLuaTransfer({ card, onDone, refreshKey, onPreview, canPrev
     } catch (err) { setError(err.message) }
     finally { setBusy(false) }
   }
-  const id = result?.target_slot === 'entrance' ? result.target_pse_id : result?.special_view_id
+  const history = results.length ? [...results].reverse() : result ? [result] : []
   return <section className="lua-panel lua-save-panel">
     <header><ArrowRightLeft size={15} /><strong>Chuyển animation Lua custom đã lưu</strong>
       <button type="button" className="btn ghost-btn" onClick={() => { setError(''); setReload(value => value + 1) }}><RefreshCw size={13} /> Tải lại</button>
@@ -54,7 +54,21 @@ export function CustomLuaTransfer({ card, onDone, refreshKey, onPreview, canPrev
     {!card && <p className="lua-browser-hint">Chọn thẻ nhân vật trước khi chuyển animation custom.</p>}
     <button type="button" className="lua-action secondary" style={{ margin: 12 }} disabled={!filename || !canPreview} onClick={() => onPreview?.(filename)}><MonitorPlay size={14} /> Play preview</button>
     {error && <p className="lua-export-error">{error}</p>}
-    {result && <p className="lua-browser-hint">Đã tạo {result.script_name} · ID <strong>{id}</strong> <button type="button" className="btn ghost-btn" onClick={() => navigator.clipboard.writeText(String(id))}><Copy size={13} /> Sao chép ID</button></p>}
+    {!!history.length && <div style={{ padding: 12 }}>
+      <strong>Animation đã chuyển cho thẻ #{card?.id}</strong>
+      {history.map((item, index) => {
+        const id = item.target_slot === 'entrance' ? item.target_pse_id : item.special_view_id
+        if (!id) return null
+        return <p key={`${item.target_slot}-${id}-${index}`} className="lua-browser-hint">
+          {item.target_slot} · {item.script_name} · ID <strong>{id}</strong>
+          <button type="button" className="btn ghost-btn" onClick={async () => {
+            try { await navigator.clipboard.writeText(String(id)) }
+            catch (err) { setError(err.message) }
+          }}><Copy size={13} /> Sao chép ID</button>
+          {Boolean(item.bgm_id) && <> · BGM ID <strong>{item.bgm_id}</strong></>}
+        </p>
+      })}
+    </div>}
     <button type="button" className="lua-action primary" style={{ margin: 12 }} disabled={!card || !filename || busy} onClick={convert}><ArrowRightLeft size={14} />{busy ? 'Đang chuyển…' : 'Chuyển vào thẻ đang sửa'}</button>
   </section>
 }

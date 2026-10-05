@@ -2,6 +2,13 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.2] - 2026-10-05
+
+### Anim Transfer và Lua Timeline
+
+- Giữ lại danh sách animation đã chuyển theo từng thẻ khi chuyển tab trong phiên mở tool.
+- Hiển thị ID, nút sao chép và BGM ID của các animation đã chuyển trong cả tab Anim Transfer và Lua Animation Editor.
+
 ## [1.0.5.1] - 2026-10-05
 
 ### Tìm animation

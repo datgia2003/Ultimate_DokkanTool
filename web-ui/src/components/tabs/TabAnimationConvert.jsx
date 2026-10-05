@@ -16,7 +16,7 @@ const TARGET_FIELDS = {
   finish: ['Finish Skill', 'special_view_id']
 }
 
-export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi' }) {
+export function TabAnimationConvert({ card, latestResult, results = [], onDone, language = 'vi' }) {
   const vi = language !== 'en'
   const [query, setQuery] = useState('')
   const [sources, setSources] = useState([])
@@ -36,7 +36,7 @@ export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState(null)
 
   useEffect(() => {
     if (!query.trim()) { setSources([]); setLoadingSources(false); return }
@@ -69,7 +69,7 @@ export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi
     setBusy(true)
     setError('')
     setMessage('')
-    setCopied(false)
+    setCopied(null)
     try {
       const response = await api.transmuteAnimation({
         source_card_id: Number(sourceId), target_card_id: Number(card.id),
@@ -88,12 +88,12 @@ export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi
     }
   }
 
-  const resultId = latestResult?.target_slot === 'entrance'
-    ? latestResult.target_pse_id : latestResult?.special_view_id
-  const targetField = TARGET_FIELDS[latestResult?.target_slot]
-  const copyId = async () => {
-    await navigator.clipboard.writeText(String(resultId))
-    setCopied(true)
+  const history = results.length ? [...results].reverse() : latestResult ? [latestResult] : []
+  const copyId = async (id, key) => {
+    try {
+      await navigator.clipboard.writeText(String(id))
+      setCopied(key)
+    } catch (err) { setError(err.message) }
   }
 
   return <div className="tab-pane">
@@ -147,16 +147,26 @@ export function TabAnimationConvert({ card, latestResult, onDone, language = 'vi
       </label>}
       {error && <p className="passive-compiler-error">{error}</p>}
       {message && <p className="hint-text">{message}</p>}
-      {resultId && targetField && <div className="form-card" style={{ marginTop: 12 }}>
-        <strong>{vi ? 'ID vừa tạo:' : 'Generated ID:'} {resultId}</strong>
-        <button type="button" className="btn" onClick={copyId} style={{ marginLeft: 10 }}><Copy size={14} /> {copied ? (vi ? 'Đã sao chép' : 'Copied') : (vi ? 'Sao chép ID' : 'Copy ID')}</button>
-        <p className="hint-text">{vi ? <>Điền ID này vào trường <code>{targetField[1]}</code> của dòng bạn chọn trong tab {targetField[0]}. SQL nháp chỉ tạo bản ghi animation; chưa gán ID vào kỹ năng.</> : <>Enter this ID in <code>{targetField[1]}</code> for the chosen row in the {targetField[0]} tab. Draft SQL creates the animation record but does not assign its ID to a skill.</>}</p>
-        {latestResult.bgm_id && latestResult.target_slot !== 'entrance' &&
-          <p className="hint-text">{vi ? <>BGM nguồn: <code>{latestResult.bgm_id}</code>. Nếu muốn dùng, tự điền vào trường BGM ID của kỹ năng tương ứng.</> : <>Source BGM: <code>{latestResult.bgm_id}</code>. Enter this in the matching skill's BGM ID field if you want to use it.</>}</p>}
-      </div>}
       <button className="btn primary-btn" onClick={convert} disabled={!selected || busy} style={{ marginTop: 12 }}>
         <ArrowRightLeft size={15} /> {busy ? (vi ? 'Đang chuyển...' : 'Transferring…') : (vi ? 'Chuyển animation vào thẻ này' : 'Transfer animation to this card')}
       </button>
     </div>
+    {!!history.length && <div className="form-card">
+      <div className="form-header"><Film size={17} /><strong>{vi ? 'Animation đã chuyển cho thẻ' : 'Transferred animations for card'} #{card.id} · {history.length}</strong></div>
+      {history.map((result, index) => {
+        const resultId = result.target_slot === 'entrance' ? result.target_pse_id : result.special_view_id
+        const targetField = TARGET_FIELDS[result.target_slot]
+        const key = `${result.target_slot}-${resultId}-${index}`
+        if (!resultId || !targetField) return null
+        return <div key={key} className="form-card" style={{ marginTop: 12 }}>
+        <strong>{SLOTS.find(([slot]) => slot === result.target_slot)?.[1]} · {result.source_name || result.script_name}</strong>
+        <p className="hint-text"><code>{result.script_name}</code>{result.source_card_id ? ` · #${result.source_card_id}` : ''}</p>
+        <strong>{vi ? 'ID vừa tạo:' : 'Generated ID:'} {resultId}</strong>
+        <button type="button" className="btn" onClick={() => copyId(resultId, key)} style={{ marginLeft: 10 }}><Copy size={14} /> {copied === key ? (vi ? 'Đã sao chép' : 'Copied') : (vi ? 'Sao chép ID' : 'Copy ID')}</button>
+        <p className="hint-text">{vi ? <>Điền ID này vào trường <code>{targetField[1]}</code> của dòng bạn chọn trong tab {targetField[0]}. SQL nháp chỉ tạo bản ghi animation; chưa gán ID vào kỹ năng.</> : <>Enter this ID in <code>{targetField[1]}</code> for the chosen row in the {targetField[0]} tab. Draft SQL creates the animation record but does not assign its ID to a skill.</>}</p>
+        {Boolean(result.bgm_id) && result.target_slot !== 'entrance' &&
+          <p className="hint-text">{vi ? <>BGM nguồn: <code>{result.bgm_id}</code>. Nếu muốn dùng, tự điền vào trường BGM ID của kỹ năng tương ứng.</> : <>Source BGM: <code>{result.bgm_id}</code>. Enter this in the matching skill's BGM ID field if you want to use it.</>}</p>}
+      </div>})}
+    </div>}
   </div>
 }

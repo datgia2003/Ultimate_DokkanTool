@@ -21,7 +21,7 @@ function FrameInput({ value, min = 0, max, onCommit }) {
     }} />
 }
 
-export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onAnimationTransferred, onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
+export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onAnimationTransferred, transferredAnimations = [], onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
   const vi = language !== 'en'
   const [clips, setClips] = useState([])
   const [composedDraft, setComposedDraft] = useState('')
@@ -559,7 +559,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onAnim
       </section>
       {message && <p className="lua-studio-message" role="status">{message}</p>}
     </>)}
-    {editorMode && <CustomLuaTransfer card={card} onDone={onAnimationTransferred} refreshKey={savedLuaRevision}
+    {editorMode && <CustomLuaTransfer card={card} onDone={onAnimationTransferred} results={transferredAnimations} refreshKey={savedLuaRevision}
       canPreview={Boolean(previewCardId && onPreviewChange)} onPreview={savedFilename => {
         previewRevisionRef.current += 1
         onTimelinePlay?.({ id: Date.now(), sequence: [] })
