@@ -442,6 +442,10 @@ def _merge_card_draft(card_ctx, card_id, changes, raw_sql, allocation_state=None
             card_ctx["card_specials"] = changes["card_specials"]
         if "transformation_descriptions" in changes:
             card_ctx["transformation_descriptions"] = changes["transformation_descriptions"]
+            # The editor's description list is authoritative, including edits
+            # and removals of descriptions originally copied with a clone.
+            card_ctx['_cloned_skill_rows'] = dict(card_ctx.get('_cloned_skill_rows', {}))
+            card_ctx['_cloned_skill_rows'].pop('transformation_descriptions', None)
         if "battle_params_draft" in changes:
             card_ctx["_battle_params_draft"] = changes["battle_params_draft"]
         for field_key in ('fields', 'field_active_relations', 'field_passive_relations'):
@@ -597,7 +601,8 @@ def _allocate_passive_sets(contexts, allocation_state):
             if old_id:
                 id_map[old_id] = new_id
         if id_map:
-            for row in ctx.get('_cloned_skill_rows', {}).get('transformation_descriptions', []):
+            for row in (ctx.get('transformation_descriptions', []) +
+                        ctx.get('_cloned_skill_rows', {}).get('transformation_descriptions', [])):
                 if row.get('skill_type') == 'PassiveSkill' and int(row.get('skill_id') or 0) in id_map:
                     row['skill_id'] = id_map[int(row['skill_id'])]
 
@@ -622,13 +627,18 @@ def _allocate_new_attack_rows(contexts, allocation_state):
                 for row in ctx.get(kind + '_skills', []):
                     row[fk] = ctx[kind + '_set']['id']
                     rows.append((kind + '_skills', row, {fk: set_table}))
+        description_tables = {'ActiveSkill': 'active_skills', 'StandbySkill': 'standby_skills',
+                              'PassiveSkill': 'passive_skills', 'FinishSkill': 'finish_skills'}
+        for description in ctx.get('transformation_descriptions', []):
+            rows.append(('transformation_descriptions', description,
+                         {'skill_id': description_tables[description['skill_type']]}))
         for table, records in ctx.get('_cloned_skill_rows', {}).items():
             if table not in CLONED_SKILL_TABLES:
                 continue
             for row in records:
                 links = {'active_skill_set_id': 'active_skill_sets', 'standby_skill_set_id': 'standby_skill_sets'}
                 if table == 'transformation_descriptions':
-                    links = {'skill_id': {'ActiveSkill': 'active_skills', 'StandbySkill': 'standby_skills', 'PassiveSkill': 'passive_skills'}[row['skill_type']]}
+                    links = {'skill_id': description_tables[row['skill_type']]}
                 rows.append((table, row, links))
         for cs in ctx.get('card_specials', []):
             rows.append(('card_specials', cs, {'special_set_id': 'special_sets',
@@ -705,6 +715,27 @@ def _allocate_new_attack_rows(contexts, allocation_state):
             if name in row or name in {'created_at', 'updated_at'} or not required or default is not None:
                 continue
             row[name] = 0 if any(t in kind for t in ('INT', 'REAL', 'NUM')) else ''
+    # Older drafts could create a description for an efficacy without an ID;
+    # JSON serialized that reference as null. Recover only an unambiguous
+    # owner, after allocating IDs for every skill in the context.
+    for ctx in contexts:
+        owners = {'ActiveSkill': ctx.get('active_skills', []),
+                  'PassiveSkill': ctx.get('passive_skills', []),
+                  'StandbySkill': ctx.get('standby_skills', []),
+                  'FinishSkill': [skill for item in ctx.get('finish_skill_sets', [])
+                                  for skill in item.get('skills', [])]}
+        descriptions = (ctx.get('transformation_descriptions', []) +
+                        ctx.get('_cloned_skill_rows', {}).get('transformation_descriptions', []))
+        for description in descriptions:
+            if int(description.get('skill_id') or 0):
+                continue
+            candidates = [skill for skill in owners.get(description.get('skill_type'), [])
+                          if int(skill.get('efficacy_type') or 0) in (79, 103, 131)]
+            if len(candidates) != 1:
+                raise ValueError('Mô tả biến hình thiếu liên kết skill. '
+                                 'Hãy xóa mô tả lỗi và chọn lại skill trong tab Transformation.')
+            description['skill_id'] = candidates[0]['id']
+
     for _, row, links in rows:
         for column, target in links.items():
             old_id = int(row.get(column) or 0)

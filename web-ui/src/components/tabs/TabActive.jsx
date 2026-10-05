@@ -79,7 +79,7 @@ export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, tra
       const draftKey = `compiled-active-${Date.now()}-${index}`
       const next = {
         ...sk,
-        id: replace ? currentSkills[index]?.id : undefined,
+        id: (replace ? currentSkills[index]?.id : null) || newDraftId(),
         _draftKey: draftKey,
         active_skill_set_id: currentSet.id
       }

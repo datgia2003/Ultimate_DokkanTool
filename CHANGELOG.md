@@ -2,6 +2,15 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.4] - 2026-10-05
+
+### Transformation descriptions
+
+- Cấp ID bản nháp ngay khi tạo skill mới để description luôn có `skill_id` hợp lệ.
+- Ánh xạ `skill_id` của Passive Skill và các skill được clone sang ID dương khi sinh SQL.
+- Tự khôi phục liên kết description cũ bị `NULL` khi chỉ có một skill biến hình phù hợp; báo lỗi rõ ràng nếu có nhiều skill có thể khớp.
+- Làm mới giao diện tab Transformation: thẻ form, ô sửa description và danh sách chọn skill theo màu hệ.
+
 ## [1.0.5.3] - 2026-10-05
 
 ### Transformation chain và xuất patch

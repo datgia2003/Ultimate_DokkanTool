@@ -688,6 +688,7 @@ export function App() {
                       )}
                       {activeTab === 'transform' && (
                         <TabTransform
+                          language={language}
                           card={card}
                           chain={chain}
                           data={cardData}

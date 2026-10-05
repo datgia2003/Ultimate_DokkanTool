@@ -123,7 +123,7 @@ export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, t
       const draftKey = `compiled-standby-${Date.now()}-${index}`
       const next = {
         ...sk,
-        id: replace ? currentSkills[index]?.id : undefined,
+        id: (replace ? currentSkills[index]?.id : null) || newDraftId(),
         _draftKey: draftKey,
         standby_skill_set_id: currentSet.id
       }

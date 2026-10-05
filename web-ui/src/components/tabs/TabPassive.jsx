@@ -211,7 +211,7 @@ export function TabPassive({ card, passive, transformationDescriptions = [], dra
     const generated = proposal.skills.map((sk, index) => {
       const draftKey = `compiled-${Date.now()}-${index}`
       const next = {
-        ...sk, _draftKey: draftKey,
+        ...sk, id: sk.id || newDraftId(), _draftKey: draftKey,
         name: currentSet.name || 'Passive Skill', exec_game_type: sk.exec_game_type ?? 0,
         sub_target_type_set_id: sk.sub_target_type_set_id ?? 0,
         efficacy_values: sk.efficacy_values ?? '{}'
@@ -243,7 +243,7 @@ export function TabPassive({ card, passive, transformationDescriptions = [], dra
     onChange('passive_set', currentSet)
     const newIndex = currentSkills.length
     onChange('passive_skills', [...currentSkills, {
-      _draftKey: `manual-${Date.now()}`, name: currentSet.name || 'Passive Skill',
+      id: newDraftId(), _draftKey: `manual-${Date.now()}`, name: currentSet.name || 'Passive Skill',
       exec_timing_type: 1, exec_game_type: 0, target_type: 1, efficacy_type: 1,
       sub_target_type_set_id: 0, calc_option: 0, turn: 1, is_once: 0,
       probability: 100, causality_conditions: '', eff_value1: null,
@@ -258,7 +258,7 @@ export function TabPassive({ card, passive, transformationDescriptions = [], dra
     if (!target || !sources.length) return
     const copied = sources.map((source, index) => copyEfficacyFields(
       source, index === 0 ? target : {
-        _draftKey: `cloned-${Date.now()}-${index}`, name: currentSet.name || 'Passive Skill',
+        id: newDraftId(), _draftKey: `cloned-${Date.now()}-${index}`, name: currentSet.name || 'Passive Skill',
         _sourceLineIndex: -1
       }, index === 0 ? target._draftKey : `cloned-${Date.now()}-${index}`
     ))
