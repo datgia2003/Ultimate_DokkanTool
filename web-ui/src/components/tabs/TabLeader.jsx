@@ -1,14 +1,19 @@
 import React, { useState } from 'react'
-import { Crown, Sparkles, Layers, Plus, Trash2, AlertTriangle } from 'lucide-react'
+import { Crown, Sparkles, Layers, Plus, Trash2, Copy, GitBranch } from 'lucide-react'
 import { DokkanDescriptionEditor } from '../common/DokkanDescriptionEditor'
 import { CausalityExpressionEditor } from '../common/CausalityExpressionEditor'
 import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 
-export function TabLeader({ leader, draft, onChange, meta }) {
+export function TabLeader({ leader, draft, onChange, meta, chain = [], card, draftsByCard = {} }) {
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [syncFormId, setSyncFormId] = useState('')
+  const [syncSource, setSyncSource] = useState(null)
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [syncError, setSyncError] = useState('')
   const currentSet = draft.leader_set || leader?.set
   const currentSkills = draft.leader_skills || leader?.skills || []
 
@@ -107,6 +112,41 @@ export function TabLeader({ leader, draft, onChange, meta }) {
     }
   }
 
+  const loadSyncSource = async () => {
+    if (!syncFormId) return
+    setSyncLoading(true)
+    setSyncError('')
+    setSyncSource(null)
+    try {
+      const detail = await api.getCard(syncFormId)
+      const sourceDraft = draftsByCard[syncFormId] || {}
+      const sourceSet = Object.prototype.hasOwnProperty.call(sourceDraft, 'leader_set') ? sourceDraft.leader_set : detail.leader?.set
+      const draftSkills = Object.prototype.hasOwnProperty.call(sourceDraft, 'leader_skills') ? sourceDraft.leader_skills : (detail.leader?.skills || [])
+      const sourceSkills = Array.isArray(draftSkills) ? draftSkills : []
+      if (!sourceSet) throw new Error('Form này chưa có Leader Skill trong database hoặc bản nháp.')
+      setSyncSource({ ...detail, leader: { set: sourceSet, skills: sourceSkills }, fromDraft: Object.keys(sourceDraft).some(key => ['leader_set', 'leader_skills'].includes(key)) })
+    } catch (err) { setSyncError(err.message) }
+    finally { setSyncLoading(false) }
+  }
+
+  const applySyncSource = () => {
+    if (!syncSource?.leader?.set) return
+    const sourceSkills = syncSource.leader.skills || []
+    const copiedSkills = sourceSkills.map((skill, index) => ({
+      ...skill,
+      id: currentSkills[index]?.id,
+      leader_skill_set_id: currentSet.id,
+      _draftKey: `chain-leader-${Date.now()}-${index}`
+    }))
+    const removed = currentSkills.slice(sourceSkills.length).filter(skill => skill.id)
+      .map(skill => ({ table: 'leader_skills', id: skill.id }))
+    onChange('leader_set', { ...currentSet, name: syncSource.leader.set.name, description: syncSource.leader.set.description })
+    onChange('leader_skills', copiedSkills)
+    if (removed.length) onChange('deleted_rows', [...(draft.deleted_rows || []), ...removed])
+    setSyncOpen(false)
+    setSyncSource(null)
+  }
+
   return (
     <div className="tab-pane leader-pane">
       {/* Set Header Editor Card */}
@@ -114,6 +154,30 @@ export function TabLeader({ leader, draft, onChange, meta }) {
         <div className="hero-top">
           <div className="hero-badge">LEADER SKILL SET #{currentSet.id}</div>
         </div>
+
+        {chain.length > 1 && <div className="leader-chain-sync">
+          <button type="button" className="btn secondary-btn" onClick={() => { setSyncOpen(value => !value); setSyncSource(null); setSyncError('') }}>
+            <GitBranch size={15} /> Đồng bộ Leader Skill từ transformation chain
+          </button>
+          {syncOpen && <div className="leader-chain-sync-panel">
+            <label htmlFor="leader-chain-source">Chọn form nguồn</label>
+            <div className="leader-chain-sync-controls">
+              <select id="leader-chain-source" value={syncFormId} onChange={event => { setSyncFormId(event.target.value); setSyncSource(null); setSyncError('') }}>
+                <option value="">Chọn một form trong chain…</option>
+                {chain.filter(form => Number(form.id) !== Number(card?.id)).map(form => <option key={form.id} value={form.id}>{form.name || `Card #${form.id}`} · #{form.id}</option>)}
+              </select>
+              <button type="button" className="btn secondary-btn" disabled={!syncFormId || syncLoading} onClick={loadSyncSource}>
+                {syncLoading ? 'Đang tải…' : 'Tải Leader Skill'}
+              </button>
+            </div>
+            {syncError && <p className="membership-error">{syncError}</p>}
+            {syncSource && <div className="leader-chain-sync-preview">
+              <strong>{syncSource.leader.set.name || `Leader Skill #${syncSource.leader.set.id}`} {syncSource.fromDraft && <small>(bản nháp hiện tại)</small>}</strong>
+              <span>{syncSource.leader.skills.length} dòng efficacy</span>
+              <button type="button" className="btn primary-btn" onClick={applySyncSource}><Copy size={14} /> Đồng bộ vào thẻ đang sửa</button>
+            </div>}
+          </div>}
+        </div>}
 
         <div className="form-field full-row">
           <label>Leader Skill Name (name)</label>

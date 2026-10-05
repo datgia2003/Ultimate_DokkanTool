@@ -184,14 +184,26 @@ category_dict = load_category_dict()
 
 def get_next_prefixed_id(base_id, existing_ids):
     base_id_int = int(base_id)
-    if not existing_ids:
-        return base_id_int
-    
     existing_ints = []
-    for x in existing_ids:
+    for value in existing_ids or []:
         try:
-            existing_ints.append(int(x))
-        except: pass
+            existing_ints.append(int(value))
+        except (TypeError, ValueError):
+            continue
+
+    # Draft passive sets use negative temporary IDs. Prefixing a negative
+    # value by string concatenation would produce invalid IDs such as
+    # ``100-237...`` when the set ID is already used by a skill row.
+    if base_id_int <= 0:
+        if base_id_int not in existing_ints:
+            return base_id_int
+        candidate = min([base_id_int, *(value for value in existing_ints if value < 0)]) - 1
+        while candidate in existing_ints:
+            candidate -= 1
+        return candidate
+
+    if not existing_ints:
+        return base_id_int
         
     if base_id_int not in existing_ints:
         return base_id_int

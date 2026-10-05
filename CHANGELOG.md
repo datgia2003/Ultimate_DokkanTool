@@ -2,6 +2,38 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5] - 2026-10-05
+
+### Lua Animation Editor
+
+- Thêm danh sách Lua custom đã lưu và chuyển sang Entrance, Active Skill, Super Attack hoặc Finish Skill cho thẻ đang sửa; lưu SQL và tài nguyên vào bản nháp. Entrance tự bỏ lệnh damage.
+- Thêm nút Play preview để nạp trực tiếp Lua custom đã chọn vào player.
+- Giảm xử lý lặp khi có nhiều clip: cache phân tích Lua, tái sử dụng track và danh sách cue, tìm cue theo frame và giới hạn tần suất cập nhật giao diện playhead.
+
+### Card Profile, category và link skill
+
+- Đồng bộ Max HP, Max ATK và Max DEF cho toàn bộ form chain, chọn một thẻ làm mốc và dùng thông số bản nháp của thẻ đó.
+- Tự cập nhật Hidden Potential Board theo element, giữ loại board hiện có khi phù hợp; khung ảnh và thumbnail cập nhật theo element đang chỉnh.
+- Thêm sao chép category và link skill từ thẻ khác; kết hợp category loại bỏ mục trùng. Đưa bộ tìm nguồn ngay cạnh phần chỉnh tương ứng.
+- Thêm đồng bộ Leader Skill từ một form trong chain theo bản nháp đang chỉnh.
+
+### Passive, transformation và SQL
+
+- Hỗ trợ efficacy 131 Reversible Exchange trong chain và SQL ở Passive, Active và Standby.
+- Thêm tạo Passive Skill mới và clone sau khi xóa; xem itemized_description của thẻ nguồn trước khi clone.
+- Sửa tìm kiếm thẻ nguồn passive; clone ưu tiên ID passive gốc và tái sử dụng ID efficacy, các dòng mới được cấp ID tăng dần.
+- Sửa cấp ID tạm âm gây lỗi invalid literal for int khi xuất SQL sau khi clone passive.
+- Giữ causality đã chỉnh trong bản nháp qua các tab và form, đưa giá trị vào SQL patch.
+- Giữ chain đang chỉnh khi mở form mượn từ thẻ khác; không thay thẻ gốc bằng thẻ gốc của form nguồn.
+- Khi nhập mod ZIP, duyệt chain theo chiều biến hình và loại thẻ tổ tiên nguồn không chỉnh khỏi Cards in Mod nếu chỉ bị kéo theo form mượn.
+- Các công cụ tìm anim, BGM và nguồn sao chép dùng database; riêng thao tác đồng bộ dùng bản nháp.
+
+### Character OST và tìm BGM
+
+- Cập nhật danh sách Character OST theo thêm/xóa animation trong bản nháp, gồm Entrance và Revival; tự phát lại khi hết bài.
+- Gộp OST trùng BGM ID và chuẩn hóa tên để tránh lặp Entrance Theme.
+- Thêm tìm BGM theo thẻ bên dưới các ô BGM của Active, Standby, Finish và EX Super Attack; hiển thị ảnh thẻ nguồn.
+
 ## [1.0.4.1] - 2026-09-30
 
 ### Sửa lỗi phrase trong animation

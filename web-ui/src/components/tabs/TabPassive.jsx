@@ -7,6 +7,7 @@ import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 import { copyEfficacyFields, PassiveEfficacyClonePicker } from './PassiveEfficacyClonePicker'
 import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
+import { newDraftId } from '../../draftIds'
 
 const EXPECTED_COMPILER_VERSION = '2026-09-24.2'
 const TRANSFORM_EFFICACY_TYPES = new Set([79, 103, 131])
@@ -74,18 +75,37 @@ function conditionForLine(lines, index) {
   return ''
 }
 
-export function TabPassive({ passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {}, language = 'vi', onAllocateBattleParam }) {
+export function TabPassive({ card, passive, transformationDescriptions = [], draft, onChange, meta, metaError, onReloadMeta, matches = {}, language = 'vi', onAllocateBattleParam }) {
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
   const [keepTransformEffects, setKeepTransformEffects] = useState(true)
   const [cloneTargetIndex, setCloneTargetIndex] = useState(null)
+  const [cloneSourceId, setCloneSourceId] = useState('')
+  const [cloneSourceName, setCloneSourceName] = useState('')
+  const [cloneSourcePassive, setCloneSourcePassive] = useState(null)
+  const [cloneSourceLoading, setCloneSourceLoading] = useState(false)
+  const [cloneSourceError, setCloneSourceError] = useState('')
+  const [cloneBusy, setCloneBusy] = useState(false)
+  const [cloneError, setCloneError] = useState('')
   const currentSet = draft.passive_set !== undefined ? draft.passive_set : passive?.set
   const currentSkills = draft.passive_skills || passive?.skills || []
   const originalSkills = passive?.skills || []
   const originalTransformSkills = originalSkills.filter(isTransformEfficacy)
   const description = currentSet?.itemized_description || currentSet?.description || ''
   const descLines = descriptionLines(description)
+  useEffect(() => {
+    if (!cloneSourceId) { setCloneSourcePassive(null); setCloneSourceError(''); return undefined }
+    const controller = new AbortController()
+    setCloneSourcePassive(null)
+    setCloneSourceLoading(true)
+    setCloneSourceError('')
+    api.getCard(cloneSourceId, controller.signal)
+      .then(detail => { if (!controller.signal.aborted) setCloneSourcePassive(detail.passive || null) })
+      .catch(err => { if (err.name !== 'AbortError') setCloneSourceError(err.message) })
+      .finally(() => { if (!controller.signal.aborted) setCloneSourceLoading(false) })
+    return () => controller.abort()
+  }, [cloneSourceId])
   useEffect(() => setKeepTransformEffects(true), [currentSet?.id])
   const sourceIndex = (sk, index, total) => {
     const explicit = sk._sourceLineIndex ?? sk.manual_desc_idx
@@ -96,11 +116,56 @@ export function TabPassive({ passive, transformationDescriptions = [], draft, on
       ? fromCompiler : suggestedLineIndex(sk, descLines, index, total)
   }
 
+  const createPassiveSet = () => {
+    const id = newDraftId()
+    onChange('passive_skill_set_id', id)
+    onChange('passive_set', { id, name: `${card?.name || 'New'} Passive Skill`, description: '', itemized_description: '' })
+    onChange('passive_skills', [])
+  }
+  const clonePassiveSet = async () => {
+    setCloneBusy(true)
+    setCloneError('')
+    try {
+      const result = await api.cloneSkill('passive', cloneSourceId, card.id)
+      const restoredRelations = new Set((result.passive_skills || []).map(skill => Number(skill.relation_id)).filter(id => id > 0))
+      onChange('deleted_rows', (draft.deleted_rows || []).filter(row =>
+        !(row.table === 'passive_skill_sets' && Number(row.id) === Number(result.passive_skill_set_id)) &&
+        !(row.table === 'passive_skill_set_relations' && restoredRelations.has(Number(row.id)))
+      ))
+      onChange('passive_skill_set_id', result.passive_skill_set_id)
+      for (const [key, value] of Object.entries(result)) onChange(key, value)
+    } catch (err) { setCloneError(err.message) }
+    finally { setCloneBusy(false) }
+  }
+
   if (!currentSet) return (
     <div className="tab-pane empty-tab">
       <Zap size={36} />
-      <h3>No Passive Skill Set found for this character</h3>
-      <p>Check the <code>passive_skill_set_id</code> field in card profile.</p>
+      <h3>Thẻ này chưa có Passive Skill</h3>
+      <p>Tạo một Passive Skill trống hoặc sao chép set từ thẻ khác để tiếp tục chỉnh sửa.</p>
+      <div className="passive-compiler-actions">
+        <button type="button" className="btn primary-btn" onClick={createPassiveSet}><Plus size={15} /> Tạo Passive Skill mới</button>
+      </div>
+      <div className="form-card skill-clone-panel">
+        <strong>Clone Passive Skill từ thẻ khác</strong>
+        <AnimationLookup slot="passive" label="Tìm thẻ nguồn theo tên / ID / tên chiêu" onSelect={(_, item) => { setCloneSourceId(String(item.card_id)); setCloneSourceName(item.name) }} />
+        {cloneSourceId && <div className="passive-clone-source">
+          <div className="passive-clone-source-head"><strong>{cloneSourceName} <small>#{cloneSourceId}</small></strong></div>
+          {cloneSourceLoading ? <p className="lua-browser-hint">Đang tải Passive Skill để đối chiếu…</p>
+            : cloneSourceError ? <p className="passive-compiler-error">Không tải được Passive Skill: {cloneSourceError}</p>
+              : cloneSourcePassive ? <>
+                <section className="passive-clone-description"><strong>itemized_description</strong>
+                  {cloneSourcePassive.set?.itemized_description
+                    ? <p>{cloneSourcePassive.set.itemized_description}</p>
+                    : <small>Thẻ nguồn không có mô tả Passive Skill.</small>}
+                </section>
+              </> : null}
+        </div>}
+        <button type="button" className="btn secondary-btn" disabled={cloneBusy || cloneSourceLoading || !cloneSourcePassive?.set || !card?.id || !(Number(cloneSourceId) > 0)} onClick={clonePassiveSet}>
+          <Copy size={14} /> {cloneBusy ? 'Đang clone…' : 'Clone Passive Skill'}
+        </button>
+        {cloneError && <p className="passive-compiler-error">{cloneError}</p>}
+      </div>
     </div>
   )
 

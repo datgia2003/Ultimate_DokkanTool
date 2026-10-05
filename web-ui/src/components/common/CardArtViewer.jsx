@@ -34,7 +34,7 @@ export function CardArtViewer({ card, onToggleCollapse }) {
     }, { threshold: [0, 0.02] })
     observer.observe(frame)
     return () => observer.disconnect()
-  }, [card?.id])
+  }, [card?.id, card?.element])
 
   const handleToggleFlip = () => {
     if (iframeRef.current?.contentWindow) {
@@ -75,7 +75,7 @@ export function CardArtViewer({ card, onToggleCollapse }) {
         <div className="lwf-player-wrapper">
           <iframe
             ref={iframeRef}
-            key={`${card.id}_lwf`}
+            key={`${card.id}_${card.element}_lwf`}
             src={lwfUrl}
             title="Dokkan LWF Card Player"
             className="lwf-iframe"

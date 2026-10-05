@@ -5,7 +5,7 @@ import { api } from '../../api'
 import { createMusicSource } from '../../audio/musicSpectrum'
 import { draftAnimationReferences } from './draftAnimations'
 
-function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = []) {
+function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = [], replacedDraftSlots = []) {
   const tracks = new Map()
   const passiveDraftChanged = Object.prototype.hasOwnProperty.call(draft, 'passive_skills') ||
     (draft.deleted_rows || []).some(row => ['passive_skills', 'passive_skill_set_relations'].includes(row.table))
@@ -16,30 +16,40 @@ function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = []
     rarity: draft.rarity ?? cardData?.card?.rarity,
     element: draft.element ?? cardData?.card?.element,
   }
+  const replaced = new Set(replacedDraftSlots)
   const add = (id, source, card = currentCard) => {
     const bid = Number(id)
     if (Number.isInteger(bid) && bid > 0) {
+      const normalizedSource = String(source || '').replace(/^(Entrance|Revival|Transformation) Theme\s*·.*$/i, '$1 Theme')
       const shortSource = ({
         'Active Theme': 'Active Skill Theme',
         'Finish Theme': 'Finish Skill Theme',
         'Standby Skill Theme': 'Standby Theme'
-      })[source] || source
+      })[normalizedSource] || normalizedSource
       const formId = card.id || currentCardId || 'unknown'
-      const key = `${formId}:${bid}`
+      const key = `bgm:${bid}`
       const entry = tracks.get(key) || { key, id: bid, card_id: formId, sources: [] }
       if (!entry.sources.includes(shortSource)) entry.sources.push(shortSource)
       tracks.set(key, entry)
     }
   }
   for (const track of chainTracks) {
-    const draftOverridesCurrentEx = Number(track.card_id) === Number(currentCardId) && track.source_type === 'ex_super_attack' && draft.card_specials !== undefined
-    const draftOverridesCurrentPassiveOst = Number(track.card_id) === Number(currentCardId) && passiveDraftChanged &&
-      /^(entrance|revival) theme$/i.test(String(track.source || ''))
+    const isCurrentCard = Number(track.card_id) === Number(currentCardId)
+    const source = String(track.source || '')
+    const draftOverridesCurrentEx = isCurrentCard && track.source_type === 'ex_super_attack' && replaced.has('super')
+    const draftOverridesCurrentActive = isCurrentCard && replaced.has('active') && /^Active Theme$/i.test(source)
+    const draftOverridesCurrentStandby = isCurrentCard && replaced.has('standby') && /^Standby Theme$/i.test(source)
+    const draftOverridesCurrentFinish = isCurrentCard && replaced.has('finish') && /^Finish Theme/i.test(source)
+    const draftOverridesCurrentPassiveOst = isCurrentCard && passiveDraftChanged &&
+      /^(entrance|revival|transformation) theme$/i.test(source)
     const legacyLabel = track.label || ''
     const legacySeparator = legacyLabel.lastIndexOf(' · ')
     const legacySource = legacySeparator >= 0 ? legacyLabel.slice(legacySeparator + 3) : ''
     const trackCard = Number(track.card_id) === Number(currentCardId) ? { ...track, ...currentCard } : track
-    if (!draftOverridesCurrentEx && !draftOverridesCurrentPassiveOst) add(track.id, track.source || legacySource || 'Character Theme', trackCard)
+    if (!draftOverridesCurrentEx && !draftOverridesCurrentActive && !draftOverridesCurrentStandby &&
+        !draftOverridesCurrentFinish && !draftOverridesCurrentPassiveOst) {
+      add(track.id, track.source || legacySource || 'Character Theme', trackCard)
+    }
   }
   if (!passiveDraftChanged) {
     for (const effect of cardData?.passive?.effects || []) add(effect.bgm_id, effect.script_name ? `Entrance Theme · ${effect.script_name}` : 'Entrance Theme')
@@ -48,9 +58,12 @@ function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = []
     const type = animation.type_key === 'revival' ? 'Revival Theme' : 'Entrance Theme'
     add(animation.bgm_id, `${type}${animation.name ? ` · ${animation.name}` : ''}`)
   }
-  add((draft.active_set || cardData?.active?.set)?.bgm_id, 'Active Skill Theme')
-  add((draft.standby_set || cardData?.standby?.set)?.bgm_id, 'Standby Theme')
-  for (const [index, finish] of (draft.finish_skill_sets || cardData?.finish || []).entries()) {
+  const activeSet = Object.prototype.hasOwnProperty.call(draft, 'active_set') ? draft.active_set : cardData?.active?.set
+  const standbySet = Object.prototype.hasOwnProperty.call(draft, 'standby_set') ? draft.standby_set : cardData?.standby?.set
+  const finishSets = Object.prototype.hasOwnProperty.call(draft, 'finish_skill_sets') ? draft.finish_skill_sets : cardData?.finish
+  add(activeSet?.bgm_id, 'Active Skill Theme')
+  add(standbySet?.bgm_id, 'Standby Theme')
+  for (const [index, finish] of (finishSets || []).entries()) {
     add(finish.set?.bgm_id, `Finish Skill Theme ${index + 1}`)
   }
   for (const special of draft.card_specials || cardData?.specials || []) {
@@ -61,15 +74,21 @@ function collectTracks(cardData, draft, chainTracks, draftPassiveAnimations = []
   }))
 }
 
-export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', language = 'vi' }) {
+export function CharacterOstPlayer({ cardData, draft, convertedAnimations = [], accent = '#06d6a0', language = 'vi' }) {
   const [chainOst, setChainOst] = useState({ cardId: null, items: [] })
   const [draftPassiveOst, setDraftPassiveOst] = useState([])
   const chainTracks = chainOst.cardId === cardData?.card?.id ? chainOst.items : []
-  const draftPassiveReferences = useMemo(() => draftAnimationReferences(cardData, draft).references
-    .filter(reference => reference.slot === 'entrance' || reference.slot === 'revival'), [cardData, draft])
+  const { references: draftReferences, replaceSlots: draftReplaceSlots } = useMemo(
+    () => draftAnimationReferences(cardData, draft), [cardData, draft])
+  const draftPassiveReferences = useMemo(() => draftReferences
+    .filter(reference => reference.slot === 'entrance' || reference.slot === 'revival'), [draftReferences])
+  const convertedPassiveAnimations = useMemo(() => convertedAnimations
+    .filter(item => item.target_slot === 'entrance' || item.target_slot === 'revival')
+    .map(({ target_slot, target_pse_id, special_view_id, script_name, bgm_id, source_name }) =>
+      ({ target_slot, target_pse_id, special_view_id, script_name, bgm_id, source_name })), [convertedAnimations])
   const tracks = useMemo(() => {
-    return collectTracks(cardData, draft, chainTracks, draftPassiveOst)
-  }, [cardData, draft, chainTracks, draftPassiveOst])
+    return collectTracks(cardData, draft, chainTracks, draftPassiveOst, draftReplaceSlots)
+  }, [cardData, draft, chainTracks, draftPassiveOst, draftReplaceSlots])
   const [selectedTrackKey, setSelectedTrackKey] = useState(null)
   const [trackMenuOpen, setTrackMenuOpen] = useState(false)
   const [trackQuery, setTrackQuery] = useState('')
@@ -86,6 +105,7 @@ export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', langua
   const bindAudio = useCallback((element) => {
     audioRef.current = element
     if (element) {
+      element.loop = true
       if (spectrumRef.current?.audio === element) return
       spectrumRef.current?.dispose()
       spectrumRef.current = createMusicSource(element)
@@ -119,16 +139,27 @@ export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', langua
   }, [cardData?.card?.id])
 
   useEffect(() => {
-    if (!draftPassiveReferences.length) {
-      setDraftPassiveOst([])
+    if (!selectedTrackKey || tracks.some(track => track.key === selectedTrackKey)) return
+    switchGeneration.current++
+    spectrumRef.current?.stop()
+    audioRef.current?.pause()
+    audioRef.current?.removeAttribute('src')
+    setSelectedTrackKey(null)
+    setPlaying(false)
+    window.dispatchEvent(new CustomEvent('dokkan:character-ost-state', { detail: { playing: false } }))
+  }, [tracks, selectedTrackKey])
+
+  useEffect(() => {
+    setDraftPassiveOst([])
+    if (!draftPassiveReferences.length && !convertedPassiveAnimations.length) {
       return undefined
     }
     const controller = new AbortController()
-    api.resolveDraftAnimations({ references: draftPassiveReferences, converted: [] }, controller.signal)
+    api.resolveDraftAnimations({ references: draftPassiveReferences, converted: convertedPassiveAnimations }, controller.signal)
       .then(result => { if (!controller.signal.aborted) setDraftPassiveOst((result.items || []).filter(item => Number(item.bgm_id) > 0)) })
       .catch(error => { if (error.name !== 'AbortError') setDraftPassiveOst([]) })
     return () => controller.abort()
-  }, [draftPassiveReferences])
+  }, [draftPassiveReferences, convertedPassiveAnimations])
 
   useEffect(() => {
     if (!trackMenuOpen) return
@@ -256,7 +287,19 @@ export function CharacterOstPlayer({ cardData, draft, accent = '#06d6a0', langua
         startSpectrum()
         window.dispatchEvent(new Event('dokkan:character-ost-play'))
         window.dispatchEvent(new CustomEvent('dokkan:character-ost-state', { detail: { playing: true } }))
-      }} onPlaying={startSpectrum} onPause={() => {
+      }} onPlaying={startSpectrum} onEnded={(event) => {
+        const audio = event.currentTarget
+        const currentTrack = tracks.find(track => track.key === selectedTrackKey) || tracks[0]
+        if (!currentTrack) return
+        const expectedSource = new URL(currentTrack.localUrl || `/bgm/${currentTrack.id}`, window.location.href).href
+        if (audio.src !== expectedSource) return
+        audio.currentTime = 0
+        audio.play().catch(() => {
+          setPlaying(false)
+          stopSpectrum()
+          setError(vi ? 'Không thể phát lại OST này' : 'Unable to replay this OST')
+        })
+      }} onPause={() => {
         setPlaying(false)
         stopSpectrum()
         window.dispatchEvent(new CustomEvent('dokkan:character-ost-state', { detail: { playing: false } }))

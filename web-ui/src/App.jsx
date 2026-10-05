@@ -29,6 +29,7 @@ import { LuaAnimationStudio } from './components/tabs/LuaAnimationStudio'
 
 import { TABS, getElementMeta } from './types'
 import { api, setModWorkspace } from './api'
+import { CausalityDraftContext } from './components/common/CausalityDraftContext'
 import './styles.css'
 
 const TAB_ICONS = {
@@ -48,12 +49,12 @@ function readDraftTransformationEdges(draftsByCard) {
       if (targetId > 0 && targetId !== sourceId) edges.push({ sourceId, targetId })
     }
     for (const skill of formDraft?.active_skills || []) {
-      if (![79, 103].includes(Number(skill.efficacy_type))) continue
+      if (![79, 103, 131].includes(Number(skill.efficacy_type))) continue
       const targetId = Number(skill.eff_val1)
       if (targetId > 0 && targetId !== sourceId) edges.push({ sourceId, targetId })
     }
     for (const skill of formDraft?.standby_skills || []) {
-      if (![79, 103].includes(Number(skill.efficacy_type))) continue
+      if (![79, 103, 131].includes(Number(skill.efficacy_type))) continue
       let values = skill.efficacy_values
       try { values = Array.isArray(values) ? values : JSON.parse(values || '[]') } catch { values = [] }
       const targetId = Number(Array.isArray(values) ? values[0] : 0)
@@ -70,6 +71,7 @@ export function App() {
   const baseWorkspaceRef = useRef(null)
 
   const [selectedId, setSelectedId] = useState(null) // Do not auto-load any card on initial open
+  const [editingChainBaseline, setEditingChainBaseline] = useState(null)
   const [activeTab, setActiveTab] = useState('stats')
   const [luaEditorMode, setLuaEditorMode] = useState(false)
   const [luaPreviewAnimation, setLuaPreviewAnimation] = useState(null)
@@ -88,6 +90,17 @@ export function App() {
   const [convertedAnimationsByCard, setConvertedAnimationsByCard] = useState({})
   const draft = draftsByCard[selectedId] || EMPTY_DRAFT
   const customSql = customSqlByCard[selectedId] || ''
+  const causalityDraftRows = useMemo(() => Object.assign({},
+    ...Object.entries(draftsByCard).filter(([id]) => Number(id) !== Number(selectedId)).map(([, entry]) => entry.causality_drafts || {}),
+    draft.causality_drafts || {}
+  ), [draftsByCard, selectedId, draft])
+  const updateCausalityDraft = (row) => {
+    if (!selectedId || !row?.id) return
+    setDraftsByCard(prev => ({ ...prev, [selectedId]: {
+      ...(prev[selectedId] || {}),
+      causality_drafts: { ...(prev[selectedId]?.causality_drafts || {}), [row.id]: { ...row } }
+    } }))
+  }
   const pendingFormCount = new Set([
     ...Object.entries(draftsByCard).filter(([, value]) => Object.keys(value || {}).length).map(([id]) => id),
     ...Object.entries(customSqlByCard).filter(([, value]) => value?.trim()).map(([id]) => id),
@@ -345,6 +358,7 @@ export function App() {
 
   const card = cardData?.card
   const baseChain = cardData?.chain || []
+  const workspaceBaseChain = editingChainBaseline ?? baseChain
   const draftTransformEdges = useMemo(() => readDraftTransformationEdges(draftsByCard), [draftsByCard])
   useEffect(() => {
     if (!card?.id) return
@@ -355,6 +369,7 @@ export function App() {
   }, [card?.id, card?.name, card?.rarity, card?.element])
   useEffect(() => {
     setResolvedDraftTransformForms({})
+    setEditingChainBaseline(null)
   }, [importedMod?.id])
   useEffect(() => {
     const knownIds = new Set(baseChain.map(form => Number(form.id)))
@@ -377,8 +392,10 @@ export function App() {
     return () => { clearTimeout(timer); controller.abort() }
   }, [baseChain, selectedId, draftTransformEdges, resolvedDraftTransformForms])
   const chain = useMemo(() => {
-    const forms = [...baseChain]
-    if (card && !forms.some(form => Number(form.id) === Number(card.id))) forms.unshift(card)
+    // Keep the original editing chain when opening a borrowed form. Its
+    // database ancestry belongs to another card and must not replace ours.
+    const forms = [...workspaceBaseChain]
+    if (editingChainBaseline === null && card && !forms.some(form => Number(form.id) === Number(card.id))) forms.unshift(card)
     let changed = true
     let passes = 0
     while (changed && passes++ < draftTransformEdges.length + 1) {
@@ -397,8 +414,41 @@ export function App() {
         }
       }
     }
+    if (card && !forms.some(form => Number(form.id) === Number(card.id))) forms.push(card)
     return forms
-  }, [baseChain, card, draftTransformEdges, resolvedDraftTransformForms])
+  }, [workspaceBaseChain, card, draftTransformEdges, resolvedDraftTransformForms])
+  const selectChainForm = (id) => {
+    if (editingChainBaseline === null) setEditingChainBaseline(baseChain.length ? [...baseChain] : [{
+      id: card.id, name: card.name, rarity: card.rarity, element: card.element
+    }])
+    setSelectedId(id)
+  }
+  const syncChainMaxStats = async sourceId => {
+    const ids = [...new Set(chain.map(form => Number(form.id)))]
+    if (!ids.includes(Number(sourceId))) throw new Error('Thẻ làm mốc không còn trong form chain.')
+    const source = Number(sourceId) === Number(card.id) ? card : (await api.getCard(sourceId)).card
+    const sourceDraft = draftsByCard[sourceId] || {}
+    const stats = Object.fromEntries(['hp_max', 'atk_max', 'def_max'].map(key => {
+      const value = Number(sourceDraft[key] ?? source[key])
+      if (!Number.isInteger(value) || value < 0) throw new Error(`Giá trị ${key} của thẻ làm mốc không hợp lệ.`)
+      return [key, value]
+    }))
+    setDraftsByCard(previous => {
+      const next = { ...previous }
+      for (const id of ids) next[id] = { ...(previous[id] || {}), ...stats }
+      return next
+    })
+    return ids.length
+  }
+  const recordCustomAnimationTransfer = result => {
+    if (!card?.id) return
+    const cid = card.id
+    setConvertedAnimationsByCard(prev => ({ ...prev, [cid]: [...(prev[cid] || []), result] }))
+    setLatestAnimationByCard(prev => ({ ...prev, [cid]: result }))
+    const sql = (result.sql_statements || []).join('\n')
+    if (sql) setCustomSqlByCard(prev => ({ ...prev, [cid]: [prev[cid], sql].filter(Boolean).join('\n') }))
+    if (result.pack_items?.length) setAnimationAssetsByCard(prev => ({ ...prev, [cid]: [...(prev[cid] || []), ...result.pack_items] }))
+  }
   const element = card ? getElementMeta(draft.element ?? card.element) : null
   const randomAccent = useMemo(() => ['#3a86ff', '#06d6a0', '#9d4edd', '#ff3366', '#ffbe0b'][Math.floor(Math.random() * 5)], [])
   const accent = element?.color || randomAccent
@@ -429,6 +479,7 @@ export function App() {
   }, [selectedId])
 
   return (
+    <CausalityDraftContext.Provider value={{ rows: causalityDraftRows, update: updateCausalityDraft }}>
     <div className="app-container" data-element={element?.typeCode?.toLowerCase() || 'neutral'}
       style={{ '--accent': accent, '--accent-2': accent, '--accent-glow': `${accent}40`, '--ost-accent': accent, '--ost-accent-soft': `${accent}24`, '--ost-accent-line': `${accent}85` }}>
       {/* Left Sidebar */}
@@ -440,6 +491,7 @@ export function App() {
         onCloseMod={closeMod}
         selectedId={selectedId}
         onSelectCard={(id) => {
+          setEditingChainBaseline(null)
           setSelectedId(id)
           if (activeTab === 'lua-studio') setActiveTab('stats')
           setSidebarOpen(false)
@@ -471,6 +523,7 @@ export function App() {
               card={card}
               ostAccent={accent}
               cardData={cardData}
+              convertedAnimations={convertedAnimationsByCard[card.id] || []}
               chain={chain}
               draft={draft}
               customSql={customSql}
@@ -481,7 +534,7 @@ export function App() {
               allowDatabaseSave={!importedMod}
               onSave={() => handleSaveToDb()}
               onReset={handleResetDraft}
-              onSelectCard={(id) => setSelectedId(id)}
+              onSelectCard={selectChainForm}
               onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
               playerOpen={playerOpen}
               onTogglePlayer={() => setPlayerOpen(!playerOpen)}
@@ -539,7 +592,7 @@ export function App() {
               {/* Left Column: Persistent Card Art & 3D LWF */}
               <aside className={`studio-card-art-panel ${cardArtOpen && !performanceMode ? '' : 'collapsed'}`}>
                 {performanceMode ? null : cardArtOpen
-                  ? <CardArtViewer card={card} onToggleCollapse={() => setCardArtOpen(false)} />
+                  ? <CardArtViewer card={{ ...card, ...draft }} onToggleCollapse={() => setCardArtOpen(false)} />
                   : <button type="button" className="card-art-expand-btn" onClick={() => setCardArtOpen(true)}
                       title="Hiện Card Art" aria-label="Hiện Card Art"><ChevronRight size={17} /></button>}
               </aside>
@@ -556,10 +609,11 @@ export function App() {
                     <>
                       {activeTab === 'lua-studio' && (
                         <LuaAnimationStudio card={card} language={language} onNavigateBack={() => setActiveTab('stats')}
+                          onAnimationTransferred={recordCustomAnimationTransfer}
                           editorMode={luaEditorMode}
                           onToggleEditorMode={() => setLuaEditorMode(value => !value)}
                           previewAnimation={luaPreviewAnimation}
-                          onPreviewChange={setLuaPreviewAnimation}
+                          onPreviewChange={animation => { setLuaPreviewAnimation(animation); setPlayerOpen(true); setPerformanceMode(false) }}
                           onTimelinePlay={setLuaTimelinePlayback}
                           onStageSaved={(asset) => setAnimationAssetsByCard(previous => ({
                             ...previous,
@@ -568,6 +622,8 @@ export function App() {
                       )}
                       {activeTab === 'stats' && (
                         <TabStats
+                          chain={chain}
+                          onSyncChainMaxStats={syncChainMaxStats}
                           categories={cardData.categories}
                           links={cardData.links}
                           meta={meta}
@@ -578,11 +634,12 @@ export function App() {
                         />
                       )}
                       {activeTab === 'leader' && (
-                        <TabLeader leader={cardData.leader} draft={draft} onChange={handleDraftChange} meta={meta} />
+                        <TabLeader leader={cardData.leader} draft={draft} onChange={handleDraftChange} meta={meta} chain={chain} card={card} draftsByCard={draftsByCard} />
                       )}
                       {activeTab === 'passive' && (
                         <TabPassive
                           key={card.id}
+                          card={card}
                           passive={cardData.passive}
                           transformationDescriptions={cardData.transformation_descriptions}
                           draft={draft}
@@ -632,7 +689,7 @@ export function App() {
                           data={cardData}
                           draft={draft}
                           onChange={handleDraftChange}
-                          onSelectCard={(id) => setSelectedId(id)}
+                          onSelectCard={selectChainForm}
                         />
                       )}
                       {activeTab === 'specials' && (
@@ -805,5 +862,6 @@ export function App() {
         </div>
       )}
     </div>
+    </CausalityDraftContext.Provider>
   )
 }

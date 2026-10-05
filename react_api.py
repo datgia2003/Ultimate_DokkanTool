@@ -375,10 +375,15 @@ def prewarm_effect_pack(epid: int):
 
 
 def get_card_chain_summary(card_id: int):
-    chain_map = get_chain_map()
-    if card_id not in chain_map:
-        return []
-    root_id, chain_ids, curr_pos = chain_map[card_id]
+    from modules.core.character import get_workspace_transformation_chain
+    chain_ids = get_workspace_transformation_chain(card_id)
+    if chain_ids is None:
+        chain_map = get_chain_map()
+        if card_id not in chain_map:
+            return []
+        root_id, chain_ids, curr_pos = chain_map[card_id]
+    else:
+        root_id = chain_ids[0] if chain_ids else card_id
     cards = []
     for pos, cid in enumerate(chain_ids):
         row = query_db_one("SELECT id, name, rarity, element, leader_skill_set_id, passive_skill_set_id FROM cards WHERE id = ?", (cid,))
@@ -1010,6 +1015,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
 
             # 1. Health check
+            if path == '/api/v2/custom-lua/list':
+                files = {item.name for item in CUSTOM_LUA_DIR.glob('*.lua') if not re.fullmatch(r'timeline_\d+_draft(?:_\d+)?\.lua', item.name)}
+                for _, name in (current_workspace.get() or {}).get('assets', []):
+                    if name.startswith('lua/ab_script/custom_lua/') and name.endswith('.lua'):
+                        files.add(Path(name).name)
+                self.send_json({'items': [{'filename': name, 'script_name': Path(name).stem} for name in sorted(files)]})
+                return
+
             if path == "/api/v2/health":
                 self.send_json({
                     "ok": True,
@@ -1256,6 +1269,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                         card = query_db_one('SELECT id, rarity, element, optimal_awakening_grow_type FROM cards WHERE id=?', (int(match.group(1)),))
                         if card:
                             try:
+                                card = dict(card)
+                                for field in ('element', 'rarity'):
+                                    override = query.get(field, [None])[0]
+                                    if override is not None:
+                                        card[field] = int(override)
                                 from modules.core.game_thumbnail import game_thumbnail
                                 thumb = game_thumbnail(card, thumb)
                             except Exception as exc:
@@ -1496,14 +1514,26 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if slot not in anim_transmuter.SLOT_CONFIG or not query_db_one("SELECT id FROM cards WHERE id = ?", (target_id,)):
                     self.send_json({"error": "Thẻ đích hoặc slot animation không hợp lệ."}, 400)
                     return
-                source_items = anim_transmuter.get_card_animations(source_id)
+                custom_source = body.get('source_custom_lua')
+                if custom_source:
+                    filename = str(custom_source)
+                    if not re.fullmatch(r'[A-Za-z0-9_-]+\.lua', filename) or not (
+                        (CUSTOM_LUA_DIR / filename).is_file() or imported_asset(f'lua/ab_script/custom_lua/{filename}')
+                    ):
+                        self.send_json({'error': 'Không tìm thấy Lua custom đã lưu.'}, 400)
+                        return
+                    source_items = [{'name': filename, 'folder': 'custom_lua', 'script_name': Path(filename).stem,
+                                     'type_key': 'custom', 'bgm_id': int(body.get('source_bgm_id') or 0)}]
+                    anim_index = 0
+                else:
+                    source_items = anim_transmuter.get_card_animations(source_id)
                 if anim_index < 0 or anim_index >= len(source_items):
                     self.send_json({"error": "Không tìm thấy animation nguồn."}, 400)
                     return
                 selected_anim = source_items[anim_index]
-                if (selected_anim.get("script_name") or "") != (body.get("source_script_name") or "") or (
+                if not custom_source and ((selected_anim.get("script_name") or "") != (body.get("source_script_name") or "") or (
                     selected_anim.get("type_key") or ""
-                ) != (body.get("source_type_key") or ""):
+                ) != (body.get("source_type_key") or "")):
                     self.send_json({"error": "Danh sách animation nguồn đã thay đổi. Hãy chọn lại animation."}, 409)
                     return
                 ok, result, animation_sql = anim_transmuter.transmute_animation(

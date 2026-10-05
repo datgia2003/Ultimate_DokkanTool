@@ -67,7 +67,14 @@ def search_animation_cards(query='', rarity='', page=1, limit=24, search_by='car
 def lookup_animations(slot, query='', rarity='', page=1, limit=24, search_by='card_name'):
     if not query.strip():
         return dict(items=[], total=0, page=1, totalPages=1, limit=24)
-    if slot == 'super':
+    if slot == 'passive':
+        source = '''SELECT pss.id, c.id card_id, c.name, c.rarity,
+            'Passive Skill Set' script_name,
+            COALESCE(NULLIF(pss.name, ''), 'Passive Skill') move_name,
+            COALESCE(NULLIF(pss.name, ''), 'Passive Skill') animation_name,
+            'Passive Skill' move_tag
+            FROM cards c JOIN passive_skill_sets pss ON pss.id=c.passive_skill_set_id'''
+    elif slot == 'super':
         base = '''FROM cards c JOIN card_specials s ON s.card_id=c.id
             LEFT JOIN special_sets ss ON ss.id=s.special_set_id'''
         queries = [f'''SELECT v.id, c.id card_id, c.name, c.rarity, v.script_name,
@@ -107,9 +114,9 @@ def lookup_animations(slot, query='', rarity='', page=1, limit=24, search_by='ca
     column = {'card_name': 'name', 'card_id': 'CAST(card_id AS TEXT)', 'move_name': 'move_name',
               'animation_id': 'CAST(id AS TEXT)', 'script': 'script_name'}.get(search_by, 'name')
     relevance, relevance_params = _name_relevance(column, term) if search_by in {'card_name', 'move_name'} else ('', [])
+    result_scope = "AND card_id % 10 != 0 AND CAST(card_id AS TEXT) NOT LIKE '9%' AND animation_name NOT LIKE '%(Extreme)%'" if slot != 'passive' else ''
     sql = f'''SELECT DISTINCT * FROM ({source}) WHERE script_name IS NOT NULL
-        AND card_id % 10 != 0 AND CAST(card_id AS TEXT) NOT LIKE '9%'
-        AND animation_name NOT LIKE '%(Extreme)%' AND {column} LIKE ? {clause}
+        {result_scope} AND {column} LIKE ? {clause}
         ORDER BY {relevance}CASE WHEN card_id=? THEN 0 ELSE 1 END,
             CASE WHEN card_id < 5000000 THEN 0 ELSE 1 END, card_id DESC, move_tag, id'''
     return _paged(sql, [value] + rarity_params + relevance_params + [int(term) if term.isdigit() else -1], page, limit)

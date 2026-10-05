@@ -37,6 +37,35 @@ def use_workspace(workspace):
         current_workspace.reset(token)
 
 
+def _prune_borrowed_form_ancestors(workspace, loaded_ids):
+    from modules.core.db import query_db_one
+    included_ids = {card['id'] for card in workspace['cards']}
+    # Older exports included database ancestors of borrowed forms. A
+    # touched stock card row is not enough to make that ancestor a mod
+    # root: retain edited card roots and their forward forms instead.
+    from modules.core.character import get_workspace_transformation_chain
+    roots = {int(cid) for cid in loaded_ids if int(cid) in included_ids}
+    for cid in included_ids:
+        imported_card = query_db_one('SELECT * FROM cards WHERE id=?', (cid,))
+        with use_workspace(None):
+            original_card = query_db_one('SELECT * FROM cards WHERE id=?', (cid,))
+        if not original_card or any(
+            imported_card.get(key) != value for key, value in original_card.items()
+            if key not in ('created_at', 'updated_at')
+        ):
+            roots.add(cid)
+    if workspace['selected_card_id']:
+        roots.add(workspace['selected_card_id'])
+    reachable = set()
+    for root_id in roots:
+        reachable.update(get_workspace_transformation_chain(root_id) or [root_id])
+    unwanted_ancestors = {
+        cid for cid in included_ids - reachable
+        if set(get_workspace_transformation_chain(cid) or []) & reachable
+    }
+    workspace['cards'] = [card for card in workspace['cards'] if card['id'] not in unwanted_ancestors]
+
+
 def import_zip(data, base_db, runtime_dir):
     workspace_id = uuid.uuid4().hex
     root = Path(runtime_dir).resolve()
@@ -177,6 +206,7 @@ def _import_zip(data, base_db, folder, workspace_id):
         loaded_ids = re.findall(r'(?m)^\s*--[^\r\n]*Loaded ID:\s*(\d+)', sql)
         workspace['selected_card_id'] = next((int(cid) for cid in loaded_ids if int(cid) in included_ids),
                                             workspace['cards'][0]['id'] if workspace['cards'] else None)
+        _prune_borrowed_form_ancestors(workspace, loaded_ids)
     WORKSPACES[workspace_id] = workspace
     archive.close()
     return workspace

@@ -5,7 +5,7 @@ from modules.core.db import query_db_all, query_db_one
 
 
 def clone_skill(kind, source_id, target_id):
-    if kind not in ('active', 'standby'):
+    if kind not in ('active', 'standby', 'passive'):
         raise ValueError('Loại skill không hợp lệ.')
     source = load_character_context(card_id=int(source_id))
     target = load_character_context(card_id=int(target_id))
@@ -19,6 +19,41 @@ def clone_skill(kind, source_id, target_id):
         counter -= 1
         return {**row, 'id': counter}
     skill_set = copy(source[kind + '_set'])
+    if kind == 'passive':
+        original_skills = target.get('passive_skills', [])
+        original_set_id = int(target['card'].get('passive_skill_set_id') or 0)
+        if original_set_id > 0:
+            skill_set['id'] = original_set_id
+        skills = []
+        next_id = max([int(row['id']) for row in original_skills], default=max(original_set_id - 1, 0))
+        for index, row in enumerate(source['passive_skills']):
+            if index < len(original_skills):
+                original = original_skills[index]
+                skill = {**row, 'id': original['id'], 'relation_id': original.get('relation_id', 0)}
+            elif original_set_id > 0:
+                next_id += 1
+                while query_db_one('SELECT id FROM passive_skills WHERE id=?', (next_id,)):
+                    next_id += 1
+                skill = {**row, 'id': next_id, 'relation_id': 0}
+            else:
+                skill = {**copy(row), 'relation_id': 0}
+            skills.append(skill)
+        ids = {old['id']: new['id'] for old, new in zip(source['passive_skills'], skills)}
+        descriptions = [
+            {**copy(row), 'skill_id': ids[row['skill_id']]}
+            for row in source.get('transformation_descriptions', [])
+            if row.get('skill_type') == 'PassiveSkill' and row.get('skill_id') in ids
+        ]
+        extra = {'transformation_descriptions': descriptions}
+        return {
+            'passive_set': skill_set,
+            'passive_skill_set_id': skill_set['id'],
+            'passive_skills': skills,
+            'passive_skill_effects': source.get('passive_skill_effects', []),
+            '_cloned_skill_rows': extra,
+            'passive_replace_existing': True,
+            'passive_keep_transform_effects': False,
+        }
     fk = kind + '_skill_set_id'
     link = {**(target.get(kind + '_link') or copy({})), 'card_id': int(target_id), fk: skill_set['id']}
     skills = [{**copy(row), fk: skill_set['id']} for row in source[kind + '_skills']]

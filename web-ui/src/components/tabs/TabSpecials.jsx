@@ -6,6 +6,7 @@ import { CausalityExpressionEditor } from '../common/CausalityExpressionEditor'
 import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
 import { newDraftId } from '../../draftIds'
+import { BgmCardLookup } from '../common/BgmCardLookup'
 
 export function TabSpecials({ specials = [], draft, onChange, meta, card, onPlayAnim }) {
   const currentSpecials = draft.card_specials || specials || []
@@ -1052,6 +1053,7 @@ export function TabSpecials({ specials = [], draft, onChange, meta, card, onPlay
                             value={cs.extra_special_option.bgm_id ?? 0}
                             onChange={(e) => updateExtraOption(idx, 'bgm_id', e.target.value)}
                           />
+                          <BgmCardLookup onSelect={id => updateExtraOption(idx, 'bgm_id', id)} />
                         </div>
                       </div>
                     )}

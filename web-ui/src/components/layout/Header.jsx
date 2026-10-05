@@ -10,6 +10,7 @@ export function Header({
   ostAccent,
   language = 'vi',
   cardData,
+  convertedAnimations = [],
   chain = [],
   draft = {},
   customSql = '',
@@ -90,7 +91,7 @@ export function Header({
         </div>
         <div className="avatar-frame">
           <img
-            src={api.getThumbUrl(card.id)}
+            src={api.getThumbUrl(card.id, { element: draft.element ?? card.element, rarity: draft.rarity ?? card.rarity })}
             alt={card.name}
             onError={(e) => { e.currentTarget.style.display = 'none' }}
           />
@@ -119,7 +120,10 @@ export function Header({
                 return <React.Fragment key={node.id}>
                   <button className={`chain-node ${isCurrent ? 'current' : ''}`}
                     onClick={() => onSelectCard(node.id)} title={`Switch to: ${node.name} (#${node.id})`}>
-                    <img src={api.getThumbUrl(node.id)} alt={node.name}
+                    <img src={api.getThumbUrl(node.id, {
+                      element: isCurrent ? (draft.element ?? node.element) : node.element,
+                      rarity: isCurrent ? (draft.rarity ?? node.rarity) : node.rarity
+                    })} alt={node.name}
                       onError={(e) => { e.currentTarget.style.display = 'none' }} />
                     <span className="node-text"><small>{index === 0 ? 'Base' : `Form ${index}`}</small><strong>#{node.id}</strong></span>
                   </button>
@@ -129,7 +133,7 @@ export function Header({
             </div>
           </div>
         )}
-        <CharacterOstPlayer cardData={cardData} draft={draft} accent={ostAccent} language={language} />
+        <CharacterOstPlayer cardData={cardData} draft={draft} convertedAnimations={convertedAnimations} accent={ostAccent} language={language} />
       </div>
     </header>
   )

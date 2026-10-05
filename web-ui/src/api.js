@@ -47,6 +47,7 @@ export const api = {
   saveCustomLua: (filename, content) => req('/custom-lua/save', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, content })
   }),
+  getCustomLuaList: signal => req('/custom-lua/list', { signal, cache: 'no-store' }),
   previewCustomLua: (filename, content) => req('/custom-lua/preview', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, content })
   }),
@@ -94,7 +95,13 @@ export const api = {
     body: JSON.stringify({ description, finish_set_id: finishSetId })
   }),
 
-  getThumbUrl: (id) => `${BASE}/thumb/${id}?style=game&v=3${workspaceId ? `&mod_workspace=${workspaceId}` : ''}`,
+  getThumbUrl: (id, overrides = {}) => {
+    const params = new URLSearchParams({ style: 'game', v: '4' })
+    if (overrides.element != null) params.set('element', overrides.element)
+    if (overrides.rarity != null) params.set('rarity', overrides.rarity)
+    if (workspaceId) params.set('mod_workspace', workspaceId)
+    return `${BASE}/thumb/${id}?${params}`
+  },
   getAudioUrl: (kind, id) => `${BASE}/audio/${kind}/${id}`,
 
   previewSql: (id, changes = {}, rawSql = '') => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Sparkles, Search, CheckCircle2, AlertCircle, Plus, Save, ChevronDown, ChevronUp, Info } from 'lucide-react'
 import { api } from '../../api'
+import { useCausalityDrafts } from './CausalityDraftContext'
 
 // Extract clean expression string from whatever format is stored in database
 export function getCausalityExprString(raw) {
@@ -121,6 +122,7 @@ export function CausalityExpressionEditor({
   meta,
   allowEditValues = true
 }) {
+  const { rows: causalityDrafts, update: updateCausality } = useCausalityDrafts()
   const initialExpr = useMemo(() => getCausalityExprString(value), [value])
   const [exprText, setExprText] = useState(initialExpr)
   const [parseError, setParseError] = useState('')
@@ -188,6 +190,8 @@ export function CausalityExpressionEditor({
   // Handle condition value updates (cau_val1, cau_val2, cau_val3)
   const handleValChange = (id, field, val) => {
     const num = val === '' ? 0 : Number(val)
+    const current = causalityDrafts[id] || detailsCache[id]
+    if (current) updateCausality({ ...current, id, [field]: num })
     setDetailsCache(prev => {
       const cur = prev[id] || {}
       return {
@@ -199,18 +203,18 @@ export function CausalityExpressionEditor({
 
   // Save modified causality to database
   const handleSaveCondition = async (id) => {
-    const item = detailsCache[id]
+    const item = causalityDrafts[id] || detailsCache[id]
     if (!item) return
     setSavingId(id)
     try {
-      await api.saveCausality({
+      updateCausality({
         id: item.id,
         causality_type: item.causality_type,
         cau_val1: item.cau_val1 ?? 0,
         cau_val2: item.cau_val2 ?? 0,
         cau_val3: item.cau_val3 ?? 0
       })
-      setFeedbackMsg(`Đã lưu Causality #${id} vào Database!`)
+      setFeedbackMsg(`Đã giữ Causality #${id} trong SQL patch!`)
       setTimeout(() => setFeedbackMsg(''), 3000)
     } catch (err) {
       setFeedbackMsg(`Lỗi khi lưu #${id}: ${err.message}`)
@@ -360,7 +364,7 @@ export function CausalityExpressionEditor({
 
           <div className="inspector-cards-grid">
             {extractedIds.map(id => {
-              const item = detailsCache[id]
+              const item = causalityDrafts[id] || detailsCache[id]
               const typeName = item?.name || meta?.causality?.[id] || `Condition ID #${id}`
               const desc = item?.desc || meta?.causality_details?.[id]?.desc || ''
               const v1Label = item?.v1 || meta?.causality_details?.[id]?.v1 || 'Value 1'
@@ -378,7 +382,7 @@ export function CausalityExpressionEditor({
                         className="save-node-btn"
                         onClick={() => handleSaveCondition(id)}
                         disabled={savingId === id}
-                        title="Lưu các giá trị này vào Database"
+                        title="Giữ các giá trị này trong SQL patch"
                       >
                         <Save size={12} />
                         <span>{savingId === id ? 'Lưu...' : 'Lưu'}</span>

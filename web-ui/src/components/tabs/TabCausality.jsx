@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { Network, Search, Filter, CheckCircle, AlertCircle, Plus, Save, Database, GitBranch, ArrowRight, RefreshCw, Sparkles, HelpCircle } from 'lucide-react'
 import { api } from '../../api'
+import { useCausalityDrafts } from '../common/CausalityDraftContext'
 
 export function TabCausality({ passive, leader, active, standby, finish, specials, meta }) {
+  const { rows: causalityDrafts, update: updateCausality } = useCausalityDrafts()
   const [activeSubTab, setActiveSubTab] = useState('editor') // 'editor' | 'tree'
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
-  const [selectedCausality, setSelectedCausality] = useState(null)
+  const [selectedRecord, setSelectedCausality] = useState(null)
+  const selectedCausality = causalityDrafts[selectedRecord?.id] || selectedRecord
+  const updateSelectedCausality = row => { setSelectedCausality(row); updateCausality(row) }
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState(null)
   const [nextId, setNextId] = useState(1)
@@ -50,6 +54,11 @@ export function TabCausality({ passive, leader, active, standby, finish, special
   }
 
   const selectCausalityById = async (id) => {
+    if (causalityDrafts[id]) {
+      setSelectedCausality(causalityDrafts[id])
+      setActiveSubTab('editor')
+      return
+    }
     try {
       const caus = await api.getCausality(id)
       if (caus && caus.id) {
@@ -66,14 +75,14 @@ export function TabCausality({ passive, leader, active, standby, finish, special
     setIsSaving(true)
     setSaveStatus(null)
     try {
-      await api.saveCausality({
+      updateCausality({
         id: Number(selectedCausality.id),
         causality_type: Number(selectedCausality.causality_type),
         cau_val1: Number(selectedCausality.cau_val1 || 0),
         cau_val2: Number(selectedCausality.cau_val2 || 0),
         cau_val3: Number(selectedCausality.cau_val3 || 0)
       })
-      setSaveStatus({ type: 'success', text: `Saved Causality #${selectedCausality.id} successfully!` })
+      setSaveStatus({ type: 'success', text: `Đã giữ Causality #${selectedCausality.id} trong SQL patch.` })
       loadCausalities(searchQuery)
     } catch (err) {
       setSaveStatus({ type: 'error', text: `Failed to save: ${err.message}` })
@@ -88,16 +97,19 @@ export function TabCausality({ passive, leader, active, standby, finish, special
     setIsSaving(true)
     setCreateStatus(null)
     try {
-      await api.saveCausality({
+      const newRow = {
         id: Number(newCausId),
         causality_type: Number(newCausType),
         cau_val1: Number(newVal1 || 0),
         cau_val2: Number(newVal2 || 0),
         cau_val3: Number(newVal3 || 0)
-      })
-      setCreateStatus({ type: 'success', text: `Created Causality #${newCausId} successfully!` })
+      }
+      updateCausality(newRow)
+      setSelectedCausality(newRow)
+      setCreateStatus({ type: 'success', text: `Đã thêm Causality #${newCausId} vào SQL patch.` })
       loadCausalities(searchQuery)
-      selectCausalityById(Number(newCausId))
+      setNextId(Number(newCausId) + 1)
+      setNewCausId(Number(newCausId) + 1)
     } catch (err) {
       setCreateStatus({ type: 'error', text: `Failed to create: ${err.message}` })
     } finally {
@@ -316,7 +328,7 @@ export function TabCausality({ passive, leader, active, standby, finish, special
                     onClick={handleSaveSelected}
                     disabled={isSaving}
                   >
-                    <Save size={14} /> {isSaving ? 'Saving...' : 'Save to Database'}
+                    <Save size={14} /> {isSaving ? 'Đang lưu…' : 'Giữ trong SQL patch'}
                   </button>
                 </div>
 
@@ -334,7 +346,7 @@ export function TabCausality({ passive, leader, active, standby, finish, special
                       value={selectedCausality.causality_type}
                       onChange={(e) => {
                         const newType = Number(e.target.value)
-                        setSelectedCausality({
+                        updateSelectedCausality({
                           ...selectedCausality,
                           causality_type: newType,
                           name: meta?.causality?.[newType] || `Type ${newType}`
@@ -379,7 +391,7 @@ export function TabCausality({ passive, leader, active, standby, finish, special
                     <input
                       type="number"
                       value={selectedCausality.cau_val1 ?? 0}
-                      onChange={(e) => setSelectedCausality({ ...selectedCausality, cau_val1: Number(e.target.value) })}
+                      onChange={(e) => updateSelectedCausality({ ...selectedCausality, cau_val1: Number(e.target.value) })}
                     />
                   </div>
 
@@ -390,7 +402,7 @@ export function TabCausality({ passive, leader, active, standby, finish, special
                     <input
                       type="number"
                       value={selectedCausality.cau_val2 ?? 0}
-                      onChange={(e) => setSelectedCausality({ ...selectedCausality, cau_val2: Number(e.target.value) })}
+                      onChange={(e) => updateSelectedCausality({ ...selectedCausality, cau_val2: Number(e.target.value) })}
                     />
                   </div>
 
@@ -401,7 +413,7 @@ export function TabCausality({ passive, leader, active, standby, finish, special
                     <input
                       type="number"
                       value={selectedCausality.cau_val3 ?? 0}
-                      onChange={(e) => setSelectedCausality({ ...selectedCausality, cau_val3: Number(e.target.value) })}
+                      onChange={(e) => updateSelectedCausality({ ...selectedCausality, cau_val3: Number(e.target.value) })}
                     />
                   </div>
                 </div>

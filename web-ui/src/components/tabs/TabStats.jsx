@@ -1,11 +1,37 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { CardMembershipEditor } from '../common/CardMembershipEditor'
 import { Heart, Swords, Shield, Activity, Sparkles, Award, Zap } from 'lucide-react'
 
-export function TabStats({ card, draft, onChange, onNavigateToExport, categories, links, meta }) {
-  if (!card) return null
+const ELEMENTAL_POTENTIAL_BOARD_RANGES = [10, 20, 30, 120]
 
-  const get = (key) => draft[key] ?? card[key] ?? ''
+function potentialBoardForElement(element, currentBoardId) {
+  const value = Number(element)
+  if (!Number.isInteger(value) || !((value >= 10 && value <= 14) || (value >= 20 && value <= 24))) return null
+  const typeIndex = value % 10
+  const boardId = Number(currentBoardId)
+  const currentRange = ELEMENTAL_POTENTIAL_BOARD_RANGES.find(start => Number.isInteger(boardId) && boardId >= start && boardId <= start + 4)
+  // Card data mostly uses A-rank boards by default; preserve a known board
+  // family when changing only the element's type.
+  return (currentRange ?? 20) + typeIndex
+}
+
+export function TabStats({ card, draft, onChange, onNavigateToExport, categories, links, meta, chain = [], onSyncChainMaxStats }) {
+  const [referenceId, setReferenceId] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
+  if (!card) return null
+  const selectedReference = chain.some(form => String(form.id) === referenceId) ? referenceId : String(card.id)
+  const syncStats = async () => {
+    setSyncBusy(true); setSyncMessage('')
+    try {
+      const count = await onSyncChainMaxStats(Number(selectedReference))
+      setSyncMessage(`Đã cập nhật Max HP / ATK / DEF cho ${count} thẻ trong bản nháp.`)
+    } catch (error) { setSyncMessage(error.message) }
+    finally { setSyncBusy(false) }
+  }
+
+  const get = (key) => key === 'potential_board_id' && Object.prototype.hasOwnProperty.call(draft, key)
+    ? (draft[key] ?? '') : (draft[key] ?? card[key] ?? '')
   const set = (key, val, isNum = true) => {
     onChange(key, isNum ? (val === '' ? null : Number(val)) : val)
   }
@@ -47,6 +73,16 @@ export function TabStats({ card, draft, onChange, onNavigateToExport, categories
       </div>
 
       {/* Main Stats Form */}
+      <div className="form-card">
+        <div className="form-header"><Activity size={18} /><strong>Đồng bộ Max HP / ATK / DEF trong form chain</strong></div>
+        <div className="form-field"><label>Thẻ làm mốc · dùng thông số bản nháp đang chỉnh</label>
+          <select value={selectedReference} onChange={event => { setReferenceId(event.target.value); setSyncMessage('') }}>
+            {chain.map(form => <option key={form.id} value={form.id}>#{form.id} · {form.name}</option>)}
+          </select>
+        </div>
+        <button type="button" className="btn" disabled={syncBusy || !chain.length || !onSyncChainMaxStats} onClick={syncStats}>{syncBusy ? 'Đang cập nhật…' : 'Cập nhật tất cả thẻ trong chain'}</button>
+        {syncMessage && <p role="status">{syncMessage}</p>}
+      </div>
       <div className="form-card">
         <div className="form-header">
           <Activity size={18} />
@@ -171,7 +207,16 @@ export function TabStats({ card, draft, onChange, onNavigateToExport, categories
             <input
               type="number"
               value={get('element')}
-              onChange={(e) => set('element', e.target.value)}
+              onChange={(e) => {
+                const nextElement = e.target.value
+                set('element', nextElement)
+                const nextBoard = potentialBoardForElement(nextElement, get('potential_board_id'))
+                if (nextBoard != null) set('potential_board_id', nextBoard)
+              }}
+              onBlur={(e) => {
+                const nextBoard = potentialBoardForElement(e.target.value, get('potential_board_id'))
+                set('potential_board_id', nextBoard)
+              }}
             />
           </div>
 

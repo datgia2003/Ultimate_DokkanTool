@@ -8,6 +8,7 @@ import { api } from '../../api'
 import { newDraftId } from '../../draftIds'
 import { SkillClone } from '../common/SkillClone'
 import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
+import { BgmCardLookup } from '../common/BgmCardLookup'
 
 export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam }) {
   const [proposal, setProposal] = useState(null)
@@ -325,6 +326,7 @@ export function TabActive({ active, draft, onChange, meta, card, onPlayAnim, tra
               value={currentSet.bgm_id ?? 0}
               onChange={(e) => updateSet('bgm_id', Number(e.target.value))}
             />
+            <BgmCardLookup onSelect={id => updateSet('bgm_id', id)} />
           </div>
         </div>
 

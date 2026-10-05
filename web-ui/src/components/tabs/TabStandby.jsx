@@ -8,6 +8,7 @@ import { api } from '../../api'
 import { newDraftId } from '../../draftIds'
 import { SkillClone } from '../common/SkillClone'
 import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
+import { BgmCardLookup } from '../common/BgmCardLookup'
 
 export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam }) {
   const currentSet = draft.standby_set !== undefined ? draft.standby_set : standby?.set
@@ -393,6 +394,7 @@ export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, t
                 </button>
               )}
             </div>
+            <BgmCardLookup onSelect={id => updateSet('bgm_id', id)} />
           </div>
         </div>
 

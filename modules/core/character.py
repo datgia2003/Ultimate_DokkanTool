@@ -16,7 +16,7 @@ def build_full_chains_map():
         SELECT DISTINCT card_active_skills.card_id as base_id, active_skills.eff_val1 as target_id
         FROM card_active_skills
         JOIN active_skills ON card_active_skills.active_skill_set_id = active_skills.active_skill_set_id
-        WHERE active_skills.efficacy_type IN (79, 103) AND active_skills.eff_val1 IS NOT NULL AND active_skills.eff_val1 > 0
+        WHERE active_skills.efficacy_type IN (79, 103, 131) AND active_skills.eff_val1 IS NOT NULL AND active_skills.eff_val1 > 0
     """)
     for r in act_rows:
         b, t = int(r['base_id']), int(r['target_id'])
@@ -43,7 +43,7 @@ def build_full_chains_map():
         SELECT DISTINCT card_standby_skill_set_relations.card_id as base_id, standby_skills.efficacy_values
         FROM card_standby_skill_set_relations
         JOIN standby_skills ON card_standby_skill_set_relations.standby_skill_set_id = standby_skills.standby_skill_set_id
-        WHERE standby_skills.efficacy_type IN (79, 103) AND standby_skills.efficacy_values IS NOT NULL
+        WHERE standby_skills.efficacy_type IN (79, 103, 131) AND standby_skills.efficacy_values IS NOT NULL
     """)
     for r in stb_rows:
         b = int(r['base_id'])
@@ -442,25 +442,25 @@ def get_card_transformation_chain_details(card_id):
         forward = []
         backward = []
 
-        # Forward Active (79, 103)
+        # Forward Active (79, 103, 131)
         cas = query_db_all("""
             SELECT active_skills.eff_val1, active_skills.efficacy_type
             FROM card_active_skills 
             JOIN active_skills ON card_active_skills.active_skill_set_id = active_skills.active_skill_set_id 
-            WHERE card_active_skills.card_id = ? AND active_skills.efficacy_type IN (79, 103)
+            WHERE card_active_skills.card_id = ? AND active_skills.efficacy_type IN (79, 103, 131)
         """, (cid,))
         for r in cas:
             t_id = r['eff_val1']
             if t_id:
-                t_str = 'Giant Form' if r['efficacy_type'] == 79 else 'Active Transformation'
+                t_str = 'Giant Form' if r['efficacy_type'] == 79 else ('Exchange Form' if r['efficacy_type'] == 131 else 'Active Transformation')
                 forward.append((t_id, t_str))
 
-        # Forward Standby (79, 103)
+        # Forward Standby (79, 103, 131)
         cssr = query_db_all("""
             SELECT standby_skills.efficacy_values, standby_skills.efficacy_type
             FROM card_standby_skill_set_relations 
             JOIN standby_skills ON card_standby_skill_set_relations.standby_skill_set_id = standby_skills.standby_skill_set_id 
-            WHERE card_standby_skill_set_relations.card_id = ? AND standby_skills.efficacy_type IN (79, 103)
+            WHERE card_standby_skill_set_relations.card_id = ? AND standby_skills.efficacy_type IN (79, 103, 131)
         """, (cid,))
         for r in cssr:
             val_str = r['efficacy_values']
@@ -468,7 +468,7 @@ def get_card_transformation_chain_details(card_id):
                 try:
                     arr = json.loads(val_str)
                     if isinstance(arr, list) and len(arr) > 0 and arr[0]:
-                        t_str = 'Giant Standby' if r['efficacy_type'] == 79 else 'Standby Form'
+                        t_str = 'Giant Standby' if r['efficacy_type'] == 79 else ('Exchange Form' if r['efficacy_type'] == 131 else 'Standby Form')
                         forward.append((arr[0], t_str))
                 except:
                     pass
@@ -492,7 +492,7 @@ def get_card_transformation_chain_details(card_id):
             SELECT card_active_skills.card_id, active_skills.efficacy_type
             FROM card_active_skills
             JOIN active_skills ON card_active_skills.active_skill_set_id = active_skills.active_skill_set_id
-            WHERE active_skills.eff_val1 = ? AND active_skills.efficacy_type IN (79, 103)
+            WHERE active_skills.eff_val1 = ? AND active_skills.efficacy_type IN (79, 103, 131)
         """, (cid,))
         for r in pre_act:
             s_id = r['card_id']
@@ -501,12 +501,18 @@ def get_card_transformation_chain_details(card_id):
 
         # Backward Standby
         pre_stb = query_db_all("""
-            SELECT card_standby_skill_set_relations.card_id
+            SELECT card_standby_skill_set_relations.card_id, standby_skills.efficacy_values
             FROM card_standby_skill_set_relations
             JOIN standby_skills ON card_standby_skill_set_relations.standby_skill_set_id = standby_skills.standby_skill_set_id
-            WHERE standby_skills.efficacy_values LIKE ? AND standby_skills.efficacy_type IN (79, 103)
-        """, (f"%{cid}%",))
+            WHERE standby_skills.efficacy_type IN (79, 103, 131)
+        """)
         for r in pre_stb:
+            try:
+                values = json.loads(r.get('efficacy_values') or '[]')
+                if not isinstance(values, list) or not values or int(values[0] or 0) != cid:
+                    continue
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
             s_id = r['card_id']
             if s_id:
                 backward.append((s_id, 'Base Form'))
@@ -571,17 +577,17 @@ def get_related_card_forms(card_id):
     related = []
     
     # 1. Post-transformations (active, standby, passive)
-    # Active (79, 103)
+    # Active (79, 103, 131)
     cas = query_db_all("""
         SELECT active_skills.eff_val1, active_skills.efficacy_type
         FROM card_active_skills 
         JOIN active_skills ON card_active_skills.active_skill_set_id = active_skills.active_skill_set_id 
-        WHERE card_active_skills.card_id = ? AND active_skills.efficacy_type IN (79, 103)
+        WHERE card_active_skills.card_id = ? AND active_skills.efficacy_type IN (79, 103, 131)
     """, (card_id,))
     for r in cas:
         val = r['eff_val1']
         eff_t = r['efficacy_type']
-        type_str = 'Target (Giant Active)' if eff_t == 79 else 'Target (Active)'
+        type_str = 'Target (Giant Active)' if eff_t == 79 else ('Target (Exchange Active)' if eff_t == 131 else 'Target (Active)')
         if val:
             card_info = query_db_one("SELECT id, name, rarity, element FROM cards WHERE id = ?", (val,))
             if card_info:
@@ -593,17 +599,17 @@ def get_related_card_forms(card_id):
                     'type': type_str
                 })
                 
-    # Standby (79, 103)
+    # Standby (79, 103, 131)
     cssr = query_db_all("""
         SELECT standby_skills.efficacy_values, standby_skills.efficacy_type
         FROM card_standby_skill_set_relations 
         JOIN standby_skills ON card_standby_skill_set_relations.standby_skill_set_id = standby_skills.standby_skill_set_id 
-        WHERE card_standby_skill_set_relations.card_id = ? AND standby_skills.efficacy_type IN (79, 103)
+        WHERE card_standby_skill_set_relations.card_id = ? AND standby_skills.efficacy_type IN (79, 103, 131)
     """, (card_id,))
     for r in cssr:
         val_str = r['efficacy_values']
         eff_t = r['efficacy_type']
-        type_str = 'Target (Giant Standby)' if eff_t == 79 else 'Target (Standby)'
+        type_str = 'Target (Giant Standby)' if eff_t == 79 else ('Target (Exchange Standby)' if eff_t == 131 else 'Target (Standby)')
         if val_str:
             try:
                 arr = json.loads(val_str)
@@ -650,17 +656,17 @@ def get_related_card_forms(card_id):
                 })
 
     # 2. Pre-transformations (active, passive, standby)
-    # Active (79, 103)
+    # Active (79, 103, 131)
     pre_cas = query_db_all("""
         SELECT card_active_skills.card_id, active_skills.efficacy_type
         FROM card_active_skills 
         JOIN active_skills ON card_active_skills.active_skill_set_id = active_skills.active_skill_set_id 
-        WHERE active_skills.efficacy_type IN (79, 103) AND active_skills.eff_val1 = ?
+        WHERE active_skills.efficacy_type IN (79, 103, 131) AND active_skills.eff_val1 = ?
     """, (card_id,))
     for r in pre_cas:
         card_info = query_db_one("SELECT id, name, rarity, element FROM cards WHERE id = ?", (r['card_id'],))
         eff_t = r['efficacy_type']
-        type_str = 'Pre-Form (Giant Active)' if eff_t == 79 else 'Pre-Form (Active)'
+        type_str = 'Pre-Form (Giant Active)' if eff_t == 79 else ('Pre-Form (Exchange Active)' if eff_t == 131 else 'Pre-Form (Active)')
         if card_info:
             related.append({
                 'id': card_info['id'],
@@ -696,17 +702,23 @@ def get_related_card_forms(card_id):
                 'type': type_str
             })
 
-    # Standby (79, 103)
+    # Standby (79, 103, 131)
     pre_stb = query_db_all("""
-        SELECT card_standby_skill_set_relations.card_id, standby_skills.efficacy_type
+        SELECT card_standby_skill_set_relations.card_id, standby_skills.efficacy_type, standby_skills.efficacy_values
         FROM card_standby_skill_set_relations
         JOIN standby_skills ON card_standby_skill_set_relations.standby_skill_set_id = standby_skills.standby_skill_set_id
-        WHERE standby_skills.efficacy_type IN (79, 103) AND standby_skills.efficacy_values LIKE ?
-    """, (f"%{card_id}%",))
+        WHERE standby_skills.efficacy_type IN (79, 103, 131)
+    """)
     for r in pre_stb:
+        try:
+            values = json.loads(r.get('efficacy_values') or '[]')
+            if not isinstance(values, list) or not values or int(values[0] or 0) != int(card_id):
+                continue
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
         card_info = query_db_one("SELECT id, name, rarity, element FROM cards WHERE id = ?", (r['card_id'],))
         eff_t = r['efficacy_type']
-        type_str = 'Pre-Form (Giant Standby)' if eff_t == 79 else 'Pre-Form (Standby)'
+        type_str = 'Pre-Form (Giant Standby)' if eff_t == 79 else ('Pre-Form (Exchange Standby)' if eff_t == 131 else 'Pre-Form (Standby)')
         if card_info:
             related.append({
                 'id': card_info['id'],
@@ -728,7 +740,51 @@ def get_related_card_forms(card_id):
     return unique_related
 
 # Helper to load context in session state
+def get_workspace_transformation_chain(card_id, overrides=None):
+    """Follow a mod's own forward links without importing donor ancestors."""
+    from modules.core.mod_workspace import current_workspace
+    workspace = current_workspace.get()
+    if not workspace:
+        return None
+    overrides = overrides or {}
+
+    def descendants(root):
+        result, seen, queue = [], set(), [int(root)]
+        while queue:
+            cid = queue.pop(0)
+            if cid in seen or cid <= 0:
+                continue
+            seen.add(cid)
+            ctx = overrides.get(cid) or load_character_context(card_id=cid)
+            if not ctx:
+                continue
+            result.append(cid)
+            for kind, value_key in [('passive', 'eff_value1'), ('active', 'eff_val1'), ('standby', None)]:
+                for skill in ctx.get(kind + '_skills', []):
+                    if int(skill.get('efficacy_type') or 0) not in (79, 103, 131):
+                        continue
+                    try:
+                        if value_key:
+                            target = int(skill.get(value_key) or 0)
+                        else:
+                            values = skill.get('efficacy_values') or '[]'
+                            values = values if isinstance(values, list) else json.loads(values)
+                            target = int(values[0]) if isinstance(values, list) and values else 0
+                        if target > 0 and target not in seen:
+                            queue.append(target)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+        return result
+
+    root = workspace.get('selected_card_id') or card_id
+    chain = descendants(root)
+    return chain if int(card_id) in chain else descendants(card_id)
+
+
 def get_full_transformation_chain(start_card_id, current_ctx):
+    workspace_chain = get_workspace_transformation_chain(start_card_id, {int(start_card_id): current_ctx})
+    if workspace_chain is not None:
+        return workspace_chain
     visited = set()
     to_visit = [start_card_id]
     
@@ -751,7 +807,7 @@ def get_full_transformation_chain(start_card_id, current_ctx):
             # Check active edits for new/edited post-transformations:
             # Active skills target (eff_val1)
             for sk in curr_ctx.get('active_skills', []):
-                if sk.get('efficacy_type') in [79, 103]:
+                if sk.get('efficacy_type') in [79, 103, 131]:
                     val = sk.get('eff_val1')
                     if val:
                         neighbors.add(int(val))
@@ -763,7 +819,7 @@ def get_full_transformation_chain(start_card_id, current_ctx):
                         neighbors.add(int(val))
             # Standby skills target (efficacy_values[0])
             for sk in curr_ctx.get('standby_skills', []):
-                if sk.get('efficacy_type') in [79, 103]:
+                if sk.get('efficacy_type') in [79, 103, 131]:
                     val_str = sk.get('efficacy_values')
                     if val_str:
                         try:

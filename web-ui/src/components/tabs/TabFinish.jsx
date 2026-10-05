@@ -5,6 +5,7 @@ import { DokkanDescriptionEditor } from '../common/DokkanDescriptionEditor'
 import { CausalityExpressionEditor } from '../common/CausalityExpressionEditor'
 import { EfficacyHintCard } from '../common/EfficacyHintCard'
 import { api } from '../../api'
+import { BgmCardLookup } from '../common/BgmCardLookup'
 
 export function TabFinish({ finish = [], transformationDescriptions = [], draft, onChange, meta, card, onPlayAnim }) {
   const currentSets = draft.finish_skill_sets !== undefined ? draft.finish_skill_sets : finish
@@ -511,6 +512,7 @@ export function TabFinish({ finish = [], transformationDescriptions = [], draft,
                       </button>
                     )}
                   </div>
+                  <BgmCardLookup onSelect={id => updateSetField(fIdx, 'bgm_id', id)} />
                 </div>
               </div>
 

@@ -373,8 +373,10 @@ def _merge_card_draft(card_ctx, card_id, changes, raw_sql, allocation_state=None
                         'SELECT COALESCE(MAX(id), 0) AS id FROM passive_skill_set_relations')['id'])
                 for idx, sk in enumerate(changes["passive_skills"]):
                     sk_dict = dict(sk)
-                    if not sk_dict.get('id'):
+                    if not sk_dict.get('id') and base_set_id > 0:
                         sk_dict['id'] = get_next_prefixed_id(base_set_id, current_ids)
+                    elif not sk_dict.get('id'):
+                        sk_dict['id'] = -(int(card_id) * 1000 + idx + 1)
                     current_ids.append(sk_dict['id'])
                     if not sk_dict.get('relation_id'):
                         next_relation_id += 1
@@ -395,12 +397,16 @@ def _merge_card_draft(card_ctx, card_id, changes, raw_sql, allocation_state=None
                         skill_map[sid].update(sk)
                     else:
                         sk_dict = dict(sk)
-                        if not sk_dict.get('id'):
+                        if not sk_dict.get('id') and base_set_id > 0:
                             sk_dict['id'] = get_next_prefixed_id(base_set_id, list(skill_map.keys()))
+                        elif not sk_dict.get('id'):
+                            sk_dict['id'] = -(int(card_id) * 1000 + len(skill_map) + 1)
                         if not sk_dict.get('relation_id'):
-                            sk_dict['relation_id'] = get_relation_id(base_set_id, len(skill_map))
+                            sk_dict['relation_id'] = get_relation_id(base_set_id, len(skill_map)) if base_set_id > 0 else 0
                         skill_map[sk_dict['id']] = sk_dict
                 card_ctx['passive_skills'] = list(skill_map.values())
+        if "passive_skill_effects" in changes:
+            card_ctx['passive_skill_effects'] = changes["passive_skill_effects"]
 
         # 4. Active Skill
         if "active_set" in changes and changes["active_set"] is None:
@@ -534,7 +540,6 @@ def _allocate_battle_param_drafts(contexts, allocation_state):
                     skill['efficacy_values'] = json.dumps(values, separators=(',', ':'))
             except (TypeError, ValueError):
                 pass
-
         for item in group.get('rows', []):
             idx = int(item.get('idx', -1))
             if idx < 0:
@@ -548,6 +553,53 @@ def _allocate_battle_param_drafts(contexts, allocation_state):
             })
     allocation_state['next_battle_param_row_id'] = next_row_id
 
+
+def _allocate_passive_sets(contexts, allocation_state):
+    """Resolve temporary passive set and efficacy IDs before SQL generation."""
+    from modules.core.db import get_next_prefixed_id
+    next_set_id = allocation_state.get('next_passive_set_id')
+    set_map = {}
+    for ctx in contexts:
+        p_set = ctx.get('passive_set')
+        if not p_set:
+            continue
+        old_set_id = int(p_set.get('id') or 0)
+        if old_set_id > 0:
+            continue
+        if old_set_id not in set_map:
+            if next_set_id is None:
+                next_set_id = int(query_db_one(
+                    'SELECT COALESCE(MAX(id), 0) AS id FROM passive_skill_sets')['id'])
+            next_set_id += 1
+            set_map[old_set_id] = next_set_id
+        p_set['id'] = set_map[old_set_id]
+        ctx['card']['passive_skill_set_id'] = p_set['id']
+    if next_set_id is not None:
+        allocation_state['next_passive_set_id'] = next_set_id
+
+    next_skill_id_by_set = {}
+    for ctx in contexts:
+        p_set = ctx.get('passive_set')
+        if not p_set:
+            continue
+        set_id = int(p_set['id'])
+        id_map = {}
+        existing = [int(sk['id']) for sk in ctx.get('passive_skills', []) if int(sk.get('id') or 0) > 0]
+        for sk in ctx.get('passive_skills', []):
+            old_id = int(sk.get('id') or 0)
+            if old_id > 0:
+                continue
+            if set_id not in next_skill_id_by_set:
+                next_skill_id_by_set[set_id] = existing
+            new_id = get_next_prefixed_id(set_id, next_skill_id_by_set[set_id])
+            next_skill_id_by_set[set_id].append(new_id)
+            sk['id'] = new_id
+            if old_id:
+                id_map[old_id] = new_id
+        if id_map:
+            for row in ctx.get('_cloned_skill_rows', {}).get('transformation_descriptions', []):
+                if row.get('skill_type') == 'PassiveSkill' and int(row.get('skill_id') or 0) in id_map:
+                    row['skill_id'] = id_map[int(row['skill_id'])]
 
 def _allocate_new_attack_rows(contexts, allocation_state):
     """Resolve temporary draft IDs and their links without writing the database."""
@@ -576,7 +628,7 @@ def _allocate_new_attack_rows(contexts, allocation_state):
             for row in records:
                 links = {'active_skill_set_id': 'active_skill_sets', 'standby_skill_set_id': 'standby_skill_sets'}
                 if table == 'transformation_descriptions':
-                    links = {'skill_id': {'ActiveSkill': 'active_skills', 'StandbySkill': 'standby_skills'}[row['skill_type']]}
+                    links = {'skill_id': {'ActiveSkill': 'active_skills', 'StandbySkill': 'standby_skills', 'PassiveSkill': 'passive_skills'}[row['skill_type']]}
                 rows.append((table, row, links))
         for cs in ctx.get('card_specials', []):
             rows.append(('card_specials', cs, {'special_set_id': 'special_sets',
@@ -737,6 +789,7 @@ def compile_character_chain_sql(card_id: int, changes: dict = None, raw_sql: str
         for table, row in shared_rows(cctx):
             if row.get('id'):
                 row.update(shared_changes.get((table, int(row['id'])), {}))
+    _allocate_passive_sets(contexts, allocation_state)
     _allocate_new_attack_rows(contexts, allocation_state)
     _allocate_passive_relations(contexts, allocation_state)
     _allocate_battle_param_drafts(contexts, allocation_state)
@@ -762,6 +815,19 @@ def compile_character_chain_sql(card_id: int, changes: dict = None, raw_sql: str
     if custom_sql_tail:
         sql_lines.append("-- Custom SQL from form drafts (applied after card rows)")
         sql_lines.extend(statement.strip() for statement in custom_sql_tail if statement.strip())
+
+    # Causality values are shared records. Emit draft overrides last so stock
+    # rows included by any form cannot restore the database values.
+    causality_drafts = {}
+    for draft in draft_order:
+        causality_drafts.update(draft.get('causality_drafts') or {})
+    if causality_drafts:
+        sql_lines.append('-- Causality values edited in the card workspace')
+        for row in causality_drafts.values():
+            row_id = int(row['id'])
+            record = dict(query_db_one('SELECT * FROM skill_causalities WHERE id=?', (row_id,)) or {})
+            record.update({key: row[key] for key in ('id', 'causality_type', 'cau_val1', 'cau_val2', 'cau_val3') if key in row})
+            sql_lines.append(generate_sql_insert_or_replace('skill_causalities', record))
 
     return repeatable_animation_sql("\n".join(sql_lines).strip())
 

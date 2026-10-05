@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
 import { Clapperboard, FileCode2, FolderPlus, Play, Pause, Scissors, Save, Trash2, Clock3, Radio, Search, Download, MonitorPlay } from 'lucide-react'
 import { AnimationChoice } from '../common/AnimationChoice'
+import { CustomLuaTransfer } from '../common/CustomLuaTransfer'
 import { AnimationSearchFilter, AnimationRarityFilter, AnimationPagination } from '../common/AnimationBrowserControls'
 
 import { inspectScript, joinClips, updateTimelineClip, removeTimelineClip, CUSTOM_LUA_FORMATS, customLuaFilename, canPlaceCustomDamage, prepareCustomLua } from './luaTimeline'
@@ -20,7 +21,7 @@ function FrameInput({ value, min = 0, max, onCommit }) {
     }} />
 }
 
-export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
+export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onAnimationTransferred, onNavigateBack, editorMode = false, onToggleEditorMode, onPreviewChange, onTimelinePlay, previewAnimation }) {
   const vi = language !== 'en'
   const [clips, setClips] = useState([])
   const [composedDraft, setComposedDraft] = useState('')
@@ -32,6 +33,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   const [playerIsPlaying, setPlayerIsPlaying] = useState(true)
   const [pausedPlayerFrame, setPausedPlayerFrame] = useState(null)
   const [filename, setFilename] = useState('custom_animation')
+  const [savedLuaRevision, setSavedLuaRevision] = useState(0)
   const [target, setTarget] = useState('attack_sp')
   const [damageEnabled, setDamageEnabled] = useState(false)
   const [removeDamageEnabled, setRemoveDamageEnabled] = useState(false)
@@ -70,6 +72,17 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
   const timelineRef = useRef(null)
   const liveScriptScrollerRef = useRef(null)
   const previewRevisionRef = useRef(0)
+  const clipAnalysisCache = useRef(new Map())
+  const lastFrameUpdateRef = useRef(0)
+  const clipInfos = useMemo(() => {
+    const next = new Map()
+    for (const clip of clips) {
+      const cached = clipAnalysisCache.current.get(clip.id)
+      next.set(clip.id, cached?.content === clip.content ? cached : { content: clip.content, info: inspectScript(clip.content) })
+    }
+    clipAnalysisCache.current = next
+    return next
+  }, [clips])
 
   useEffect(() => {
     const acceptSelection = animation => {
@@ -148,7 +161,7 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     if (!best || cue.frame > best.frame || cue.frame === best.frame && cue.lineIndex > best.lineIndex) return cue
     return best
   }, null)
-  const selectedInfo = useMemo(() => selected ? inspectScript(selected.content) : { lines: [], cues: [], maxFrame: 1 }, [selected])
+  const selectedInfo = selected ? clipInfos.get(selected.id).info : { lines: [], cues: [], maxFrame: 1 }
   const totalFrames = Math.max(1, ...clips.map(clip => clip.startFrame + Math.max(1, clip.outFrame - clip.inFrame + 1)))
   const timelineWidth = Math.max(760, Math.min(5000, totalFrames * 1.4))
   const visibleFrame = Math.max(0, Math.min(totalFrames, syncedFrame == null ? playhead : syncedFrame))
@@ -212,11 +225,20 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       previewRevisionRef.current += 1
     }
   }, [preparedExport.content, preparedExport.filename, exportError, editorMode, previewCardId, previewCardName, previewElement])
-  const currentCues = useMemo(() => clips.flatMap(clip => {
-    const { cues } = inspectScript(clip.content)
+  const timelineCues = useMemo(() => clips.flatMap(clip => {
+    const { cues } = clipInfos.get(clip.id).info
     return cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame)
       .map(cue => ({ ...cue, clipName: clip.name, timelineFrame: clip.startFrame + cue.frame - clip.inFrame }))
-  }).filter(cue => cue.timelineFrame <= visibleFrame).sort((a, b) => b.timelineFrame - a.timelineFrame).slice(0, 8), [clips, visibleFrame])
+  }).sort((a, b) => b.timelineFrame - a.timelineFrame), [clips, clipInfos])
+  const currentCues = useMemo(() => {
+    let low = 0, high = timelineCues.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (timelineCues[middle].timelineFrame > visibleFrame) low = middle + 1
+      else high = middle
+    }
+    return timelineCues.slice(low, low + 8)
+  }, [timelineCues, visibleFrame])
 
   useEffect(() => {
     if (editorMode || !liveCue) return
@@ -240,6 +262,9 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       const detail = event.detail || {}
       const expectedCardId = editorMode ? (previewAnimation?.card_id || card?.id) : card?.id
       if (Number(detail.cardId) !== Number(expectedCardId)) return
+      const now = performance.now()
+      if (detail.playing && now - lastFrameUpdateRef.current < 50) return
+      lastFrameUpdateRef.current = now
       setPlayerIsPlaying(Boolean(detail.playing))
       setPausedPlayerFrame(detail.playing ? null : Math.max(0, Math.round(Number(detail.frame) || 0)))
       if (Number(detail.maxFrame) > 0) setPlayerMaxFrame(Number(detail.maxFrame))
@@ -325,18 +350,19 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     setClips(previous => previous.flatMap(clip => clip.id === selected.id ? [left, right] : [clip]))
     setSelectedId(right.id)
   }
-  const syncTimelineScroll = event => {
+  const syncTimelineScroll = useCallback(event => {
     const left = event.currentTarget.scrollLeft
     timelineRef.current?.querySelectorAll('.lua-ruler-scroll, .lua-track-viewport').forEach(element => {
       if (element !== event.currentTarget) element.scrollLeft = left
     })
-  }
+  }, [])
 
   const saveScript = async () => {
     if (!clips.length || !preparedExport.content?.trim() || exportError || busy) return
     setBusy(true); setMessage('')
     try {
       const saved = await api.saveCustomLua(preparedExport.filename, preparedExport.content)
+      setSavedLuaRevision(value => value + 1)
       const archivePath = `lua/ab_script/${preparedExport.folder}/${saved.filename}`
       if (card?.id) onStageSaved?.({ source_path: saved.source_path, archive_path: archivePath, filename: saved.filename, target: preparedExport.folder, format: target })
       setMessage(card?.id
@@ -382,6 +408,21 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     if (!damageAvailable || !damageEnabled || removeDamageEnabled || playerIsPlaying || pausedPlayerFrame == null) return
     setDamageFrame(pausedPlayerFrame)
   }
+
+  const timelineTracks = useMemo(() => clips.map((clip, index) => {
+          const info = clipInfos.get(clip.id).info
+          const duration = Math.max(1, clip.outFrame - clip.inFrame + 1)
+          return <div className={`lua-track-row ${selected?.id === clip.id ? 'selected' : ''}`} key={clip.id} onClick={() => setSelectedId(clip.id)}>
+            <div className="lua-track-label"><small>TRACK {index + 1}</small><strong title={clip.name}>{clip.name}</strong><span>{info.cues.length} {vi ? 'lệnh' : 'calls'}</span></div>
+            <div className="lua-track-viewport" onScroll={syncTimelineScroll}><div className="lua-track-canvas" style={{ width: timelineWidth }}>
+              <div className="lua-track-grid">{Array.from({ length: Math.ceil(totalFrames / 60) + 1 }, (_, i) => <i key={i} style={{ left: `${(i * 60 / totalFrames) * 100}%` }} />)}</div>
+              <div className="lua-clip-block" style={{ left: `${(clip.startFrame / totalFrames) * 100}%`, width: `${Math.max(2, (duration / totalFrames) * 100)}%` }}>
+                {info.cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame).map(cue => <button type="button" key={`${cue.node.range[0]}-${cue.frame}`} className="lua-cue-marker" style={{ left: `${((cue.frame - clip.inFrame) / duration) * 100}%` }} title={`${cue.frame}f · ${cue.name}`} onClick={event => { event.stopPropagation(); setSelectedId(clip.id); setPlayhead(clip.startFrame + cue.frame - clip.inFrame); setSyncedFrame(null) }} />)}
+              </div>
+              <i className="lua-playhead" style={{ left: "var(--lua-playhead-position)" }} />
+            </div></div>
+          </div>
+        }), [clips, clipInfos, selected?.id, totalFrames, timelineWidth, vi, syncTimelineScroll])
 
   return <section className="lua-studio-page">
     <header className="lua-studio-header">
@@ -471,22 +512,9 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
     </div>}
 
     {editorMode && (!clips.length ? <div className="lua-studio-empty"><FileCode2 size={31} /><strong>{vi ? 'Nhập một hoặc nhiều file Lua để bắt đầu' : 'Import one or more Lua files to begin'}</strong><span>{vi ? 'Các lệnh theo frame sẽ hiện thành điểm đánh dấu trên timeline.' : 'Frame calls will appear as markers on the timeline.'}</span></div> : <>
-      <div className="lua-timeline-shell" ref={timelineRef}>
+      <div className="lua-timeline-shell" ref={timelineRef} style={{ "--lua-playhead-position": `${(visibleFrame / totalFrames) * 100}%` }}>
         <div className="lua-timeline-ruler"><div className="lua-timeline-label">{vi ? 'Track / file' : 'Track / file'}</div><div className="lua-ruler-scroll" onScroll={syncTimelineScroll}><div className="lua-ruler" style={{ width: timelineWidth }}>{Array.from({ length: Math.ceil(totalFrames / 60) + 1 }, (_, index) => <span key={index} style={{ left: `${(index * 60 / totalFrames) * 100}%` }}>{index * 60}f</span>)}</div></div></div>
-        {clips.map((clip, index) => {
-          const info = inspectScript(clip.content)
-          const duration = Math.max(1, clip.outFrame - clip.inFrame + 1)
-          return <div className={`lua-track-row ${selected?.id === clip.id ? 'selected' : ''}`} key={clip.id} onClick={() => setSelectedId(clip.id)}>
-            <div className="lua-track-label"><small>TRACK {index + 1}</small><strong title={clip.name}>{clip.name}</strong><span>{info.cues.length} {vi ? 'lệnh' : 'calls'}</span></div>
-            <div className="lua-track-viewport" onScroll={syncTimelineScroll}><div className="lua-track-canvas" style={{ width: timelineWidth }}>
-              <div className="lua-track-grid">{Array.from({ length: Math.ceil(totalFrames / 60) + 1 }, (_, i) => <i key={i} style={{ left: `${(i * 60 / totalFrames) * 100}%` }} />)}</div>
-              <div className="lua-clip-block" style={{ left: `${(clip.startFrame / totalFrames) * 100}%`, width: `${Math.max(2, (duration / totalFrames) * 100)}%` }}>
-                {info.cues.filter(cue => cue.frame >= clip.inFrame && cue.frame <= clip.outFrame).map(cue => <button type="button" key={`${cue.node.range[0]}-${cue.frame}`} className="lua-cue-marker" style={{ left: `${((cue.frame - clip.inFrame) / duration) * 100}%` }} title={`${cue.frame}f · ${cue.name}`} onClick={event => { event.stopPropagation(); setSelectedId(clip.id); setPlayhead(clip.startFrame + cue.frame - clip.inFrame); setSyncedFrame(null) }} />)}
-              </div>
-              {visibleFrame <= totalFrames && <i className="lua-playhead" style={{ left: `${(visibleFrame / totalFrames) * 100}%` }} />}
-            </div></div>
-          </div>
-        })}
+        {timelineTracks}
       </div>
       <label className="lua-scrub-control"><span>{vi ? 'Vị trí player' : 'Player frame'}</span><input type="range" min="0" max={playerMaxFrame || totalFrames} step="1" value={Math.min(playerMaxFrame || totalFrames, visibleFrame)} onChange={event => { const value = Number(event.target.value); setPlayhead(value); setSyncedFrame(value); window.dispatchEvent(new CustomEvent('dokkan:anim-player-control', { detail: { action: 'seek', frame: value } })) }} /><strong>{Math.round(visibleFrame)}f</strong></label>
 
@@ -531,5 +559,14 @@ export function LuaAnimationStudio({ card, language = 'vi', onStageSaved, onNavi
       </section>
       {message && <p className="lua-studio-message" role="status">{message}</p>}
     </>)}
+    {editorMode && <CustomLuaTransfer card={card} onDone={onAnimationTransferred} refreshKey={savedLuaRevision}
+      canPreview={Boolean(previewCardId && onPreviewChange)} onPreview={savedFilename => {
+        previewRevisionRef.current += 1
+        onTimelinePlay?.({ id: Date.now(), sequence: [] })
+        onPreviewChange?.({ title: `${savedFilename} · Preview`, name: savedFilename, type: 'Lua Custom',
+          card_id: previewCardId, card_name: previewCardName, element: previewElement,
+          preview_revision: Date.now(), script_path: `ab_script/custom_lua/${savedFilename}` })
+        setMessage(`Đã nạp ${savedFilename} vào player.`)
+      }} />}
   </section>
 }
