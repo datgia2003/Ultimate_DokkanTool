@@ -173,6 +173,8 @@ def save_custom_lua(filename: str, content: str, overwrite=False):
     """Save one user-authored animation script under game res for later patching."""
     if not isinstance(content, str) or not content.strip():
         raise ValueError("Lua script không được để trống.")
+    from modules.core.lua_compat import normalize_transferred_lua
+    content = normalize_transferred_lua(content, phase=None)
     encoded = content.encode("utf-8")
     if len(encoded) > 5 * 1024 * 1024:
         raise ValueError("Lua script tối đa 5 MB.")
@@ -855,22 +857,24 @@ def compile_workspace_sql(card_id, changes, raw_sql):
     if not workspace:
         return compile_character_chain_sql(card_id, changes, raw_sql)
     parts = [repeatable_animation_sql(workspace['sql']), '\n;']
-    drafts = changes.get('_form_drafts') or {str(card_id): changes}
+    drafts = changes.get('_form_drafts') if '_form_drafts' in changes else {str(card_id): changes}
     custom = changes.get('_form_custom_sql') or {str(card_id): raw_sql}
     pending = {int(cid) for cid, draft in drafts.items() if draft}
     pending.update(int(cid) for cid, value in custom.items() if value)
-    # Imported rows also need normalization when the user exports without edits.
-    # This is the same chain compilation used for repairing an existing ZIP.
-    pending.update(int(card['id']) for card in workspace['cards'])
-    pending.update(int(cid) for cid in changes.get('_form_chain_ids', []))
-    pending.add(int(card_id))
+    if raw_sql and raw_sql.strip():
+        pending.add(int(card_id))
+    # Imported SQL is authoritative. Recompile only forms with new edits;
+    # regenerating unrelated shared rows can replace data from the old mod.
+    if not pending:
+        return materialize_patch_sql(parts[0], workspace.get('base_db_path', DB_PATH))
     scoped_changes = {
-        '_form_chain_ids': list(dict.fromkeys([*changes.get('_form_chain_ids', []), *sorted(pending)])),
+        '_form_chain_ids': sorted(pending),
         '_form_drafts': {str(cid): drafts.get(str(cid), {}) for cid in pending},
         '_form_custom_sql': custom,
     }
     allocation_state = {}
-    parts.append(compile_character_chain_sql(card_id, scoped_changes, raw_sql, allocation_state))
+    compile_id = int(card_id) if int(card_id) in pending else min(pending)
+    parts.append(compile_character_chain_sql(compile_id, scoped_changes, raw_sql, allocation_state))
     return materialize_patch_sql('\n'.join(parts), workspace.get('base_db_path', DB_PATH))
 
 
@@ -891,6 +895,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Vary", "X-Mod-Workspace")
         self.cors()
         self.end_headers()
         self.wfile.write(data)
@@ -1736,7 +1742,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     edited_meta = {key: meta_dict[key] for key in ('Name', 'Description', 'Authors', 'UUID')}
                     meta_dict = {**meta_dict, **workspace['metadata'], **edited_meta}
                 target_zip_name = Path(body.get("filename", "patch.zip")).name
-                inc_sql = body.get("inc_sql", True)
+                inc_sql = True if workspace else body.get("inc_sql", True)
                 sql_content = body.get("sql_content", "")
                 card_id = int(body.get("card_id") or 0)
                 changes = body.get("changes") or {}
@@ -1788,7 +1794,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                             items.append((str(source), archive_path))
                 # New conversions override imported files, which override stock files.
                 items = list({name: (source, name) for source, name in items}.values())
-                if inc_sql and not sql_content.strip():
+                if workspace and sql_content.strip():
+                    # A manual SQL overlay must still retain the original mod.
+                    sql_content = compile_workspace_sql(card_id, changes, raw_sql) + '\n;\n' + sql_content
+                    sql_content = materialize_patch_sql(sql_content, workspace.get('base_db_path', DB_PATH))
+                elif inc_sql and not sql_content.strip():
                     sql_content = compile_workspace_sql(card_id, changes, raw_sql)
 
                 if inc_sql and not sql_content.strip():

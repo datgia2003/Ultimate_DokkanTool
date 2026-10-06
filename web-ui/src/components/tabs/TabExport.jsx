@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { PackageCheck, Upload, Download, Key, CheckCircle, AlertCircle, FileArchive, Sparkles, Code, ChevronDown, ChevronRight, Copy, Check, RotateCcw, Zap } from 'lucide-react'
+import { PackageCheck, Upload, Download, Key, CheckCircle, AlertCircle, FileArchive, Sparkles, Code, ChevronDown, ChevronRight, Copy, Check, RotateCcw, Zap, Save } from 'lucide-react'
 import { api } from '../../api'
 
 export function TabExport({ card, importedMeta, hasCustomAnimation = false, draft = {}, patchChanges, customSql = '', pendingFormCount = 0, onChangeCustomSql }) {
@@ -22,6 +22,7 @@ export function TabExport({ card, importedMeta, hasCustomAnimation = false, draf
 
   const [status, setStatus] = useState({ step: 'idle', message: '', details: null })
   const [isBuilding, setIsBuilding] = useState(false)
+
 
   useEffect(() => {
     setExportMode(hasCustomAnimation ? 'full' : 'simple')
@@ -101,7 +102,7 @@ export function TabExport({ card, importedMeta, hasCustomAnimation = false, draf
       .finally(() => setLoadingSql(false))
   }
 
-  const handleBuildZip = async () => {
+  const handleBuildZip = async (saveMod = false) => {
     setIsBuilding(true)
     setStatus({ step: 'zipping', message: 'Archiving game resources into Dokkan ZIP structure...' })
 
@@ -120,9 +121,9 @@ export function TabExport({ card, importedMeta, hasCustomAnimation = false, draf
         filename,
         meta,
         cardId: card.id,
-        incSql,
-        includeAssets: exportMode === 'full' ? includeAssets : false,
-        sqlContent: incSql && isManualSql ? sqlContent : '',
+        incSql: saveMod || importedMeta ? true : incSql,
+        includeAssets: saveMod ? true : (exportMode === 'full' ? includeAssets : false),
+        sqlContent: (saveMod || importedMeta || incSql) && isManualSql ? sqlContent : '',
         changes: patchChanges || draft,
         rawSql: patchChanges ? '' : customSql
       })
@@ -353,7 +354,7 @@ export function TabExport({ card, importedMeta, hasCustomAnimation = false, draf
       <div className="form-card">
         <div className="form-header"><FileArchive size={17} /><strong>Thành phần patch</strong></div>
         <label className="form-field">
-          <span><input type="checkbox" checked={incSql} onChange={(e) => setIncSql(e.target.checked)} /> Bao gồm file Patch SQL (patch.sql)</span>
+          <span><input type="checkbox" checked={importedMeta ? true : incSql} disabled={Boolean(importedMeta)} onChange={(e) => setIncSql(e.target.checked)} /> Bao gồm file Patch SQL (patch.sql)</span>
         </label>
         <label className="form-field">
           <span>
@@ -506,9 +507,13 @@ export function TabExport({ card, importedMeta, hasCustomAnimation = false, draf
 
       {/* Action Buttons */}
       <div className="export-actions-row">
+        {importedMeta && <button type="button" className="btn primary-btn large-btn" disabled={isBuilding}
+          onClick={() => handleBuildZip(true)}>
+          <Save size={17} /><span>Lưu mod đã chỉnh (ZIP)</span>
+        </button>}
         <button
           className="btn secondary-btn large-btn"
-          onClick={handleBuildZip}
+          onClick={() => handleBuildZip()}
           disabled={isBuilding}
         >
           {exportMode === 'simple' ? <Zap size={17} /> : <FileArchive size={17} />}

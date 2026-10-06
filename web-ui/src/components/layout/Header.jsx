@@ -21,6 +21,9 @@ export function Header({
   isSaving,
   onSave,
   allowDatabaseSave = true,
+  hasImportedMod = false,
+  onSaveMod,
+  savingMod = false,
   onReset,
   onSelectCard,
   onToggleSidebar,
@@ -48,6 +51,10 @@ export function Header({
         </div>
 
         <div className="right-actions">
+          {hasImportedMod && <button className="btn primary-btn" onClick={onSaveMod} disabled={savingMod}
+            title={language === 'vi' ? 'Lưu toàn bộ mod đã chỉnh thành ZIP' : 'Save the edited mod as a ZIP'}>
+            <Save size={14} /><span>{savingMod ? (language === 'vi' ? 'Đang lưu…' : 'Saving…') : (language === 'vi' ? 'Lưu mod' : 'Save mod')}</span>
+          </button>}
           {pendingFormCount > 0 && (
             <span className="unsaved-badge">
               <span className="dot" /> Bản nháp: {pendingFormCount} form

@@ -88,18 +88,28 @@ export function App() {
   const [unassignedAudioAssets, setUnassignedAudioAssets] = useState([])
   const [latestAnimationByCard, setLatestAnimationByCard] = useState({})
   const [convertedAnimationsByCard, setConvertedAnimationsByCard] = useState({})
+  const [savingMod, setSavingMod] = useState(false)
   const draft = draftsByCard[selectedId] || EMPTY_DRAFT
   const customSql = customSqlByCard[selectedId] || ''
   const causalityDraftRows = useMemo(() => Object.assign({},
+    importedMod?.causalities || {},
     ...Object.entries(draftsByCard).filter(([id]) => Number(id) !== Number(selectedId)).map(([, entry]) => entry.causality_drafts || {}),
     draft.causality_drafts || {}
-  ), [draftsByCard, selectedId, draft])
+  ), [draftsByCard, selectedId, draft, importedMod?.causalities])
   const updateCausalityDraft = (row) => {
     if (!selectedId || !row?.id) return
-    setDraftsByCard(prev => ({ ...prev, [selectedId]: {
-      ...(prev[selectedId] || {}),
-      causality_drafts: { ...(prev[selectedId]?.causality_drafts || {}), [row.id]: { ...row } }
-    } }))
+    setDraftsByCard(prev => {
+      const next = { ...prev }
+      // A causality ID is shared by every form. Replace older copies so
+      // switching forms or exporting cannot restore an earlier value.
+      for (const [id, formDraft] of Object.entries(prev)) {
+        if (formDraft.causality_drafts?.[row.id]) next[id] = { ...formDraft,
+          causality_drafts: { ...formDraft.causality_drafts, [row.id]: { ...row } } }
+      }
+      next[selectedId] = { ...(next[selectedId] || {}),
+        causality_drafts: { ...(next[selectedId]?.causality_drafts || {}), [row.id]: { ...row } } }
+      return next
+    })
   }
   const pendingFormCount = new Set([
     ...Object.entries(draftsByCard).filter(([, value]) => Object.keys(value || {}).length).map(([id]) => id),
@@ -321,6 +331,30 @@ export function App() {
     }
   }
 
+  const saveImportedMod = async () => {
+    if (!importedMod || !card?.id || savingMod) return
+    setSavingMod(true)
+    try {
+      const title = importedMod.metadata?.patchName || importedMod.metadata?.Name || importedMod.metadata?.title || 'Imported Mod'
+      const filename = `${String(title).replace(/[^a-zA-Z0-9_-]/g, '_') || 'mod'}.zip`
+      const result = await api.buildZip({
+        filename,
+        meta: {
+          title,
+          author: importedMod.metadata?.authors || importedMod.metadata?.Authors || 'Dokkan Modder',
+          version: importedMod.metadata?.version || importedMod.metadata?.Version || '1.0.0',
+          description: importedMod.metadata?.description || importedMod.metadata?.Description || '',
+          uuid: Number(importedMod.metadata?.uuid || importedMod.metadata?.UUID) || undefined
+        },
+        cardId: card.id, incSql: true, includeAssets: true,
+        changes: patchChanges, rawSql: ''
+      })
+      showToast(`Đã lưu mod ZIP: ${result.zip_path}`, 'success')
+    } catch (error) {
+      showToast(`Không lưu được mod ZIP: ${error.message}`, 'error')
+    } finally { setSavingMod(false) }
+  }
+
   const importMod = async (file) => {
     if (!file || importBusy) return
     setImportBusy(true)
@@ -534,6 +568,9 @@ export function App() {
               hasAnimationDraft={Boolean(animationAssetsByCard[selectedId]?.length)}
               isSaving={isSaving}
               allowDatabaseSave={!importedMod}
+              hasImportedMod={Boolean(importedMod)}
+              onSaveMod={saveImportedMod}
+              savingMod={savingMod}
               onSave={() => handleSaveToDb()}
               onReset={handleResetDraft}
               onSelectCard={selectChainForm}

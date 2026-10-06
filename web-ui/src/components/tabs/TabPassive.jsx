@@ -100,7 +100,7 @@ export function TabPassive({ card, passive, transformationDescriptions = [], dra
     setCloneSourcePassive(null)
     setCloneSourceLoading(true)
     setCloneSourceError('')
-    api.getCard(cloneSourceId, controller.signal)
+    api.getSourceCard(cloneSourceId, controller.signal)
       .then(detail => { if (!controller.signal.aborted) setCloneSourcePassive(detail.passive || null) })
       .catch(err => { if (err.name !== 'AbortError') setCloneSourceError(err.message) })
       .finally(() => { if (!controller.signal.aborted) setCloneSourceLoading(false) })

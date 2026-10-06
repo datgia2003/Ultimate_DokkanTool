@@ -2,12 +2,19 @@
 import uuid
 from modules.core.character import load_character_context
 from modules.core.db import query_db_all, query_db_one
+from modules.core.mod_workspace import use_workspace
 
 
 def clone_skill(kind, source_id, target_id):
     if kind not in ('active', 'standby', 'passive'):
         raise ValueError('Loại skill không hợp lệ.')
-    source = load_character_context(card_id=int(source_id))
+    with use_workspace(None):
+        source = load_character_context(card_id=int(source_id))
+        source_ultimate = query_db_one('SELECT * FROM ultimate_specials WHERE id=?',
+            ((source or {}).get('active_set', {}).get('ultimate_special_id'),)) if kind == 'active' and (source or {}).get('active_set') else None
+        source_finish_relations = query_db_all(
+            'SELECT * FROM standby_skill_set_finish_skill_set_relations WHERE standby_skill_set_id=?',
+            (source['standby_set']['id'],)) if kind == 'standby' and (source or {}).get('standby_set') else []
     target = load_character_context(card_id=int(target_id))
     if not target or not target.get('card'):
         raise ValueError('Không tìm thấy thẻ đích.')
@@ -66,7 +73,7 @@ def clone_skill(kind, source_id, target_id):
     extra['transformation_descriptions'] = descriptions
     if kind == 'active':
         extra['ultimate_specials'] = []
-        ultimate = query_db_one('SELECT * FROM ultimate_specials WHERE id=?', (skill_set.get('ultimate_special_id'),))
+        ultimate = source_ultimate
         if ultimate:
             new_ultimate = copy(dict(ultimate))
             skill_set['ultimate_special_id'] = new_ultimate['id']
@@ -75,8 +82,6 @@ def clone_skill(kind, source_id, target_id):
             {**copy(row), fk: skill_set['id']} for row in source.get('field_active_relations', [])]
     else:
         extra['standby_skill_set_finish_skill_set_relations'] = [
-            {**copy(dict(row)), fk: skill_set['id']} for row in query_db_all(
-                'SELECT * FROM standby_skill_set_finish_skill_set_relations WHERE standby_skill_set_id=?',
-                (source['standby_set']['id'],))]
+            {**copy(dict(row)), fk: skill_set['id']} for row in source_finish_relations]
     return {kind + '_set': skill_set, kind + '_link': link,
             kind + '_skills': skills, '_cloned_skill_rows': extra}

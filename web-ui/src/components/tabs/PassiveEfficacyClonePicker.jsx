@@ -64,7 +64,7 @@ export function PassiveEfficacyClonePicker({ onClose, onCopy, meta, language = '
     setLoadingCard(card.id)
     setError('')
     try {
-      const detail = await api.getCard(card.id)
+      const detail = await api.getSourceCard(card.id)
       const passive = detail.passive || {}
       const skills = passive.skills || []
       setSelectedCards(items => [...items, {

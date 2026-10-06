@@ -83,7 +83,7 @@ export function CardMembershipEditor({ card, draft, onChange, categories = [], l
     setCopyLoading(true)
     setCopyError('')
     const timer = setTimeout(() => {
-      api.getCards({ q: term, rarities: '5,4,3,2,1,0', page: copyPage, limit: 24 }, controller.signal)
+      api.getCards({ q: term, rarities: '5,4,3,2,1,0', page: copyPage, limit: 24, databaseSource: true }, controller.signal)
         .then(data => {
           if (controller.signal.aborted) return
           setCopyResults(data.items || [])
@@ -99,7 +99,7 @@ export function CardMembershipEditor({ card, draft, onChange, categories = [], l
     setCopySourceLoading(true)
     setCopyError('')
     try {
-      const detail = await api.getCard(source.id)
+      const detail = await api.getSourceCard(source.id)
       setCopySource({ ...source, categories: detail.categories || [], links: detail.links || [] })
     } catch (err) { setCopyError(`Không tải được dữ liệu thẻ nguồn: ${err.message}`) }
     finally { setCopySourceLoading(false) }

@@ -3824,6 +3824,19 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   margin-top: 3px;
 }
 
+.causality-create-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #2563eb66;
+  border-radius: 6px;
+  background: #0b1730;
+}
+
+.causality-create-inline .form-field { margin: 0; }
+
 .val-field {
   display: flex;
   flex-direction: column;

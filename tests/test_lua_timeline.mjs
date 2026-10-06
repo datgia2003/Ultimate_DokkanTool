@@ -102,14 +102,49 @@ test('an outgoing video stays visible until the incoming IN frame is painted', (
   assert.equal(layer.clips.length, 2)
 })
 
-function run(source, globals = {}) {
+function run(source, globals = {}, configure = () => {}) {
   const host = createLuaHost()
   const bank = { commands: [] }
   installBinders(host, bank)
+  configure(host, bank)
   for (const [name, value] of Object.entries({ _IS_PLAYER_SIDE_: 1, _IS_SKIP_: 0, _IS_DODGE_: 0, ...globals })) host.setGlobalNumber(name, value)
   try { host.run(source, 'timeline-test'); return bank }
   finally { globalThis.fengari.lua.lua_close(host.L) }
 }
+
+test('native work handle zero keeps effect keys; dropped sounds never target it', () => {
+  const source = `effect = entryEffect(0, 161422, 0x100, -1, 0, 0, 0)
+setEffScaleKey(0, effect, 1, 1)
+setEffAlphaKey(0, effect, 255)
+sound = playSe(500, 123)
+setStartTimeMs(sound, 600)
+endPhase(600)`
+  const bank = run(joinClips([{ name: 'Spirit Bomb', content: source, startFrame: 0, inFrame: 0, outFrame: 240 }]), {}, host => {
+    host.register('entryEffect', () => 0)
+  })
+  assert.ok(bank.commands.some(c => c.type === 'setEffAlphaKey' && c.frame === 0 && c.workId === 0 && c.a === 255))
+  assert.ok(bank.commands.some(c => c.type === 'setEffScaleKey' && c.frame === 0 && c.workId === 0))
+  assert.ok(bank.commands.some(c => c.type === 'setEffAlphaKey' && c.frame === 240 && c.workId === 0 && c.a === 255))
+  assert.ok(bank.commands.some(c => c.type === 'setEffAlphaKey' && c.frame === 241 && c.workId === 0 && c.a === 0))
+  assert.equal(bank.commands.some(c => c.type === 'setStartTimeMs'), false)
+})
+
+test('legacy custom helpers and source phases are repaired before transfer', () => {
+  const source = `setPhase(9)
+local function __tl_drop() return 0 end
+local function __tl_timed_work(fn, frame, id, ...)
+  if id ~= nil and id ~= 0 then return fn(frame, id, ...) end
+end
+local effect = entryEffect(0, 161422, 0x100, -1, 0, 0, 0)
+__tl_timed_work(setEffAlphaKey, 0, effect, 255)
+endPhase(240)`
+  const prepared = prepareCustomLua(source, { target: 'entrance', filename: 'spirit' }).content
+  const bank = run(prepared, {}, host => host.register('entryEffect', () => 0))
+  assert.ok(bank.commands.some(c => c.type === 'setEffAlphaKey' && c.workId === 0 && c.a === 255))
+  assert.equal(bank.commands.find(c => c.type === 'setPhase').phase, 0)
+  const nullify = run(prepareCustomLua(source, { target: 'ab_sys', filename: 'spirit' }).content)
+  assert.ok(nullify.commands.filter(c => c.type === 'setPhase').every(c => c.phase === 9))
+})
 
 const clips = [
   { name: 'Fusion', content: fusion, startFrame: 0, inFrame: 0, outFrame: 448 },
@@ -409,7 +444,8 @@ test('the custom damage checkbox has no effect on Counter, Nullify, non-ut Activ
     assert.equal(canPlaceCustomDamage(target, 'bs0001.lua'), false)
     const source = 'dealDamage(20); endPhase(100)'
     const result = prepareCustomLua(source, { target, filename: 'bs0001.lua', damageEnabled: true, damageFrame: 67 })
-    assert.equal(result.content, source)
+    if (target === 'ab_sys') assert.equal(run(result.content).commands.find(c => c.type === 'setPhase').phase, 9)
+    else assert.equal(result.content, source)
     assert.deepEqual(run(result.content).commands.filter(cmd => cmd.type === 'dealDamage').map(cmd => cmd.frame), [20])
   }
 })

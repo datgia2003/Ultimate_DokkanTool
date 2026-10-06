@@ -12,6 +12,7 @@ import os
 import json
 import zipfile
 import requests
+from modules.core.lua_compat import native_animation_bytes
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 PATCHES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "patches")
@@ -488,6 +489,9 @@ def build_patch_zip(output_zip_path, items_to_pack, sql_content=None, metadata_d
             arc_name = item[1]
             if kind == "str":
                 zf.writestr(arc_name, item[2])
+            elif arc_name.startswith('files/lua/ab_script/') and arc_name.endswith('.lua'):
+                with open(item[2], 'rb') as lua_file:
+                    zf.writestr(arc_name, native_animation_bytes(lua_file.read(), arc_name))
             else:
                 zf.write(item[2], arc_name)
             if progress_callback:

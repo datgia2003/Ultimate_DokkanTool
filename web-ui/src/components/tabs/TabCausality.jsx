@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { Network, Search, Filter, CheckCircle, AlertCircle, Plus, Save, Database, GitBranch, ArrowRight, RefreshCw, Sparkles, HelpCircle } from 'lucide-react'
-import { api } from '../../api'
+import { api, getModWorkspace } from '../../api'
 import { useCausalityDrafts } from '../common/CausalityDraftContext'
 
 export function TabCausality({ passive, leader, active, standby, finish, specials, meta }) {
   const { rows: causalityDrafts, update: updateCausality } = useCausalityDrafts()
+  const workspaceId = getModWorkspace()
   const [activeSubTab, setActiveSubTab] = useState('editor') // 'editor' | 'tree'
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
   const [selectedRecord, setSelectedCausality] = useState(null)
-  const selectedCausality = causalityDrafts[selectedRecord?.id] || selectedRecord
+  const selectedCausality = selectedRecord ? { ...selectedRecord, ...causalityDrafts[selectedRecord.id] } : null
   const updateSelectedCausality = row => { setSelectedCausality(row); updateCausality(row) }
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState(null)
@@ -26,8 +27,9 @@ export function TabCausality({ passive, leader, active, standby, finish, special
 
   // Load initial causalities & next ID
   useEffect(() => {
+    setSelectedCausality(null)
     loadCausalities('')
-  }, [])
+  }, [workspaceId])
 
   const loadCausalities = async (query = '') => {
     setIsSearching(true)

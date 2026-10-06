@@ -5,8 +5,9 @@ export function setModWorkspace(id) { workspaceId = id || '' }
 export function getModWorkspace() { return workspaceId }
 
 async function req(path, options = {}) {
+  const { databaseSource = false, ...fetchOptions } = options
   const url = `${BASE}${path}`
-  const response = await fetch(url, { ...options, headers: { ...options.headers, ...(workspaceId ? { 'X-Mod-Workspace': workspaceId } : {}) } })
+  const response = await fetch(url, { ...fetchOptions, cache: 'no-store', headers: { ...fetchOptions.headers, ...(workspaceId && !databaseSource ? { 'X-Mod-Workspace': workspaceId } : {}) } })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new Error(data.error || `HTTP ${response.status}: ${response.statusText}`)
@@ -22,18 +23,19 @@ export const api = {
   getMeta: () => req('/meta'),
   getCardMemberships: signal => req('/card-memberships', { signal, cache: 'no-store' }),
 
-  getCards: ({ q = '', rarities = '5,4,3', element = '', page = 1, limit = 24 } = {}, signal) => {
+  getCards: ({ q = '', rarities = '5,4,3', element = '', page = 1, limit = 24, databaseSource = false } = {}, signal) => {
     const params = new URLSearchParams()
     if (q) params.set('q', q)
     if (rarities) params.set('rarities', rarities)
     if (element && element !== 'all') params.set('element', element)
     params.set('page', page)
     params.set('limit', limit)
-    return req(`/cards?${params.toString()}`, { signal })
+    return req(`/cards?${params.toString()}`, { signal, databaseSource, cache: databaseSource ? 'no-store' : 'default' })
   },
 
   getEnemyCards: signal => req('/enemy-cards', { signal }),
   getCard: (id, signal) => req(`/cards/${id}`, { signal }),
+  getSourceCard: (id, signal) => req(`/cards/${id}`, { signal, databaseSource: true, cache: 'no-store' }),
   getChain: (id) => req(`/cards/${id}/chain`),
   resolveDraftAnimations: (payload, signal) => req('/animations/resolve-draft', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal

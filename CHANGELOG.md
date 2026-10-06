@@ -2,6 +2,24 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.5] - 2026-10-06
+
+### Lua Animation Editor và Lua Transfer
+
+- Sửa Lua timeline dùng `0` làm dấu lệnh bị bỏ; work ID effect bằng `0` vẫn nhận được lệnh scale và alpha.
+- Giữ nguyên alpha đến frame OUT rồi mới ẩn effect, tránh cleanup key làm hình mờ dần về đen cả đoạn clip.
+- Gộp các clip vào phase thống nhất; khi xuất custom Nullify vẫn đặt phase 9, còn Lua đã transfer được chuẩn hóa theo phase đích.
+- Tự sửa helper timeline cũ và phase nguồn khi chuyển anim hoặc đóng gói mod ZIP; giữ nguyên file nguồn đang mở và tài nguyên nhị phân.
+- Lưu Lua custom qua bộ sửa tương thích với helper work ID cũ.
+
+### Lưu mod ZIP và Causality
+
+- Thêm nút lưu mod ZIP đã chỉnh ngay trên thanh công cụ; lưu cả SQL, asset và metadata mà không cần mở tab xuất patch.
+- Khi lưu mod đã mở, giữ các dòng SQL và file cũ; chỉ biên dịch lại form có thay đổi để tránh làm mất dữ liệu mod.
+- Nạp causality từ mod vào giao diện, giữ giá trị chỉnh sửa khi đổi form và đưa thay đổi vào SQL patch.
+- Thêm tạo causality cạnh ô biểu thức, chọn loại, nhập các value và tự thêm ID mới vào biểu thức trong bản nháp.
+- Các thao tác tìm và clone skill tiếp tục lấy dữ liệu nguồn từ database gốc, không phụ thuộc thay đổi ở bản nháp.
+
 ## [1.0.5.4] - 2026-10-05
 
 ### Transformation descriptions

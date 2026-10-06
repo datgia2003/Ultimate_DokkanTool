@@ -17,6 +17,7 @@ import datetime
 import subprocess
 import threading
 from modules.core.mod_workspace import database_path, imported_asset
+from modules.core.lua_compat import normalize_transferred_lua
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database_decrypted.db")
 BASE_RES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game res")
@@ -954,6 +955,10 @@ def transmute_animation(source_anim, target_slot, target_card_id, custom_script_
         # 3. Lược bỏ damage nếu chuyển sang Entrance
         if strip_damage and target_slot == "entrance":
             lua_content, deal_stripped, shake_stripped = strip_damage_calls(lua_content)
+
+        # Source phases and old Timeline work-ID sentinels can render correctly
+        # in the web preview but queue invisible effects in the native game.
+        lua_content = normalize_transferred_lua(lua_content)
             
         # 4. Ghi file LUA mới vào thư mục đích
         target_lua_dir = os.path.join(BASE_RES_DIR, "ab_script", target_folder)

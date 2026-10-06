@@ -261,7 +261,11 @@ export function joinClips(clips) {
       const { node, name, frame, values } = call
       const args = node.arguments.map(argument => source.slice(...argument.range))
       let replacement = null
-      if (isTimed(call)) {
+      if (name === 'setPhase' || name === 'gotoPhase') {
+        // Each source queues commands in its own battle phase (Nullify uses
+        // phase 9). A merged animation must queue every clip in one phase.
+        replacement = '__tl_drop()'
+      } else if (isTimed(call)) {
         // Discard calls, not whole lines: calls may return a work ID in an
         // assignment, span lines, or share a line with another statement.
         if (name === 'endPhase' || frame > clip.outFrame || (frame < clip.inFrame && AUDIO_CALLS.has(name))) {
@@ -320,7 +324,7 @@ export function joinClips(clips) {
         const target = numberValue(node.arguments[1], values)
         if (target == null) throw new Error(`${clip.name}:${node.loc.start.line}: không xác định được skipFrame.`)
         replacement = target < clip.inFrame || target > clip.outFrame
-          ? '__tl_drop()' : `skipFrame(${args[0]}, ${Math.round(target + offset)})`
+          ? '__tl_drop()' : `skipFrame(0, ${Math.round(target + offset)})`
       }
       if (replacement) edits.push({ start: node.range[0], end: node.range[1], text: replacement })
     }
@@ -329,7 +333,8 @@ export function joinClips(clips) {
     return `-- ===== ${name} · timeline start ${clip.startFrame}f · source frames ${clip.inFrame}-${clip.outFrame} =====
 do
   local __tl_effects, __tl_sounds, __tl_voices = {}, {}, {}
-  local function __tl_drop() return 0 end
+  local __tl_alphas = {}
+  local function __tl_drop() return nil end
   local function __tl_effect(fn, frame, ...)
     local id = fn(frame, ...)
     __tl_effects[#__tl_effects + 1] = id
@@ -357,22 +362,40 @@ do
     return fn(frame, cue, ...)
   end
   local function __tl_work(fn, id, ...)
-    if id ~= nil and id ~= 0 then return fn(id, ...) end
+    if id ~= nil then return fn(id, ...) end
     return 0
   end
   local function __tl_timed_work(fn, frame, id, ...)
-    if id ~= nil and id ~= 0 then return fn(frame, id, ...) end
+    if id ~= nil then
+      if fn == setEffAlphaKey then
+        local alpha = ...
+        if __tl_alphas[id] == nil or frame >= __tl_alphas[id].frame then
+          __tl_alphas[id] = { frame = frame, value = alpha }
+        end
+      end
+      return fn(frame, id, ...)
+    end
     return 0
   end
+  local function __tl_hide_effect(frame, id)
+    local alpha = __tl_alphas[id]
+    -- Alpha keys interpolate. Hold the last value until OUT, otherwise the
+    -- cleanup key at the boundary makes the entire clip fade towards black.
+    if frame > ${clip.startFrame} and (alpha == nil or alpha.frame < frame) then
+      setEffAlphaKey(frame - 1, id, alpha and alpha.value or 255)
+    end
+    setEffAlphaKey(frame, id, 0)
+    __tl_alphas[id] = { frame = frame, value = 0 }
+  end
   local function __tl_remove_effects(frame)
-    for _, id in ipairs(__tl_effects) do setEffAlphaKey(frame, id, 0) end
+    for _, id in ipairs(__tl_effects) do __tl_hide_effect(frame, id) end
   end
   if ENABLE_AUTO_TIME_STRETCH then ENABLE_AUTO_TIME_STRETCH(1) end
   local function __tl_run()
 ${body}
   end
   __tl_run()
-  for _, id in ipairs(__tl_effects) do setEffAlphaKey(${boundary}, id, 0) end
+  for _, id in ipairs(__tl_effects) do __tl_hide_effect(${boundary}, id) end
   for _, id in ipairs(__tl_sounds) do stopSe(${boundary}, id) end
   for cue in pairs(__tl_voices) do stopVoice(${boundary}, cue) end
   if __tl_has_movie then
@@ -383,7 +406,7 @@ ${body}
 end`
   })
   const endFrame = Math.max(...ordered.map(clip => clip.startFrame + clip.outFrame - clip.inFrame))
-  return `${sections.join('\n\n')}\n\n-- End the combined timeline once, after all clips.\nendPhase(${endFrame});\n`
+  return `-- All clips share one native battle phase.\nsetPhase(0);\n${sections.join('\n\n')}\n\n-- End the combined timeline once, after all clips.\nendPhase(${endFrame});\n`
 }
 
 export const CUSTOM_LUA_FORMATS = [
@@ -448,6 +471,31 @@ export function prepareCustomLua(content, { target, filename, damageEnabled = fa
   const outputFilename = customLuaFilename(target, filename)
   let output = String(content || '')
   if (!output.trim()) return { content: '', filename: outputFilename, folder: format.folder }
+  // Export phase 9 only for Nullify/Absorb. Transfer into other slots must not
+  // retain the source phase; the in-app player doesn't filter queues by phase.
+  const phase = target === 'ab_sys' ? 9 : 0
+  const phaseEdits = []
+  walk(parse(output), node => {
+    if (node.type === 'FunctionDeclaration' && node.identifier?.name === '__tl_drop') {
+      const value = node.body[0]?.type === 'ReturnStatement' && node.body[0].arguments[0]
+      if (value?.type === 'NumericLiteral' && value.value === 0) {
+        phaseEdits.push({ start: value.range[0], end: value.range[1], text: 'nil' })
+      }
+    }
+    if (node.type === 'FunctionDeclaration' && ['__tl_work', '__tl_timed_work'].includes(node.identifier?.name)) {
+      const condition = node.body[0]?.type === 'IfStatement' && node.body[0].clauses[0]?.condition
+      if (condition?.type === 'LogicalExpression' && condition.operator === 'and'
+          && condition.right.type === 'BinaryExpression' && condition.right.operator === '~='
+          && condition.right.left.name === 'id' && condition.right.right.value === 0) {
+        phaseEdits.push({ start: condition.range[0], end: condition.range[1], text: 'id ~= nil' })
+      }
+    }
+    const name = callName(node)
+    const argument = name === 'setPhase' || name === 'skipFrame' ? node.arguments[0]
+      : name === 'gotoPhase' ? node.arguments[1] : null
+    if (argument) phaseEdits.push({ start: argument.range[0], end: argument.range[1], text: String(phase) })
+  })
+  output = replaceRanges(output, phaseEdits)
   if (target === 'entrance') {
     output = commentDamageCalls(output, new Set(['dealDamage', 'setDamage']), 'Entrance: damage disabled')
   } else if (removeDamageEnabled) {
@@ -465,6 +513,7 @@ export function prepareCustomLua(content, { target, filename, damageEnabled = fa
     // runs before an endPhase at the same frame, even if source Lua returns.
     output = `-- Custom damage frame\ndealDamage(${frame});\n\n${output}`
   }
+  if (target === 'ab_sys') output = `-- Native phase for ${format.en}\nsetPhase(${phase});\n${output}`
   parse(output)
   return { content: output, filename: outputFilename, folder: format.folder }
 }

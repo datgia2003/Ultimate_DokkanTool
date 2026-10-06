@@ -181,6 +181,10 @@ def _import_zip(data, base_db, folder, workspace_id):
     from modules.core.db import query_db_one, query_db_all
     card_ids = set()
     with use_workspace(workspace):
+        workspace['causalities'] = {
+            str(row_id): row for table, row_id in touched if table == 'skill_causalities'
+            if (row := query_db_one('SELECT * FROM skill_causalities WHERE id=?', (row_id,)))
+        }
         # Shared skills/views can belong to many unrelated cards. Only infer owners
         # when the SQL itself provides no card IDs or card relations.
         for table, row_id in (() if direct_card_ids else touched):
@@ -213,4 +217,5 @@ def _import_zip(data, base_db, folder, workspace_id):
 
 
 def public_workspace(workspace):
-    return {key: workspace[key] for key in ('id', 'metadata', 'cards', 'selected_card_id', 'has_custom_animation')}
+    return {**{key: workspace[key] for key in ('id', 'metadata', 'cards', 'selected_card_id', 'has_custom_animation')},
+            'causalities': workspace.get('causalities', {})}

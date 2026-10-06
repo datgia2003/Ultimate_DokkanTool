@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Sparkles, Search, CheckCircle2, AlertCircle, Plus, Save, ChevronDown, ChevronUp, Info } from 'lucide-react'
-import { api } from '../../api'
+import { api, getModWorkspace } from '../../api'
 import { useCausalityDrafts } from './CausalityDraftContext'
 
 // Extract clean expression string from whatever format is stored in database
@@ -123,6 +123,7 @@ export function CausalityExpressionEditor({
   allowEditValues = true
 }) {
   const { rows: causalityDrafts, update: updateCausality } = useCausalityDrafts()
+  const workspaceId = getModWorkspace()
   const initialExpr = useMemo(() => getCausalityExprString(value), [value])
   const [exprText, setExprText] = useState(initialExpr)
   const [parseError, setParseError] = useState('')
@@ -133,6 +134,11 @@ export function CausalityExpressionEditor({
   const [searching, setSearching] = useState(false)
   const [savingId, setSavingId] = useState(null)
   const [feedbackMsg, setFeedbackMsg] = useState('')
+  const [creatingFor, setCreatingFor] = useState(null)
+  const [createType, setCreateType] = useState(1)
+  const [createValues, setCreateValues] = useState([0, 0, 0])
+  const [nextCausalityId, setNextCausalityId] = useState(1)
+  const [createError, setCreateError] = useState('')
 
   // Sync if external value changes drastically
   useEffect(() => {
@@ -166,8 +172,8 @@ export function CausalityExpressionEditor({
   // Load details for extracted IDs
   useEffect(() => {
     let active = true
+    setDetailsCache({})
     extractedIds.forEach(id => {
-      if (!detailsCache[id]) {
         api.getCausality(id)
           .then(res => {
             if (active && res && !res.error) {
@@ -175,10 +181,9 @@ export function CausalityExpressionEditor({
             }
           })
           .catch(() => {})
-      }
     })
     return () => { active = false }
-  }, [extractedIds])
+  }, [extractedIds, workspaceId])
 
   // Handle typing expression
   const handleTextChange = (text) => {
@@ -190,7 +195,7 @@ export function CausalityExpressionEditor({
   // Handle condition value updates (cau_val1, cau_val2, cau_val3)
   const handleValChange = (id, field, val) => {
     const num = val === '' ? 0 : Number(val)
-    const current = causalityDrafts[id] || detailsCache[id]
+  const current = detailsCache[id] || causalityDrafts[id] ? { ...detailsCache[id], ...causalityDrafts[id] } : null
     if (current) updateCausality({ ...current, id, [field]: num })
     setDetailsCache(prev => {
       const cur = prev[id] || {}
@@ -201,9 +206,45 @@ export function CausalityExpressionEditor({
     })
   }
 
+  const openCreateCausality = async () => {
+    setCreatingFor('expression')
+    setCreateType(1)
+    setCreateValues([0, 0, 0])
+    setCreateError('')
+    try {
+      const data = await api.getCausalities('', 1)
+      const used = [...Object.keys(causalityDrafts).map(Number), ...Object.keys(detailsCache).map(Number)]
+      setNextCausalityId(Math.max(Number(data.next_id) || 1, ...used.map(id => id + 1), 1))
+    } catch (error) { setCreateError(error.message) }
+  }
+
+  const createCausality = () => {
+    const id = nextCausalityId
+    if (!Number.isInteger(id) || id <= 0) { setCreateError('ID causality mới không hợp lệ.'); return }
+    const detail = meta?.causality_details?.[createType] || {}
+    const row = {
+      id, causality_type: Number(createType), cau_val1: Number(createValues[0]) || 0,
+      cau_val2: Number(createValues[1]) || 0, cau_val3: Number(createValues[2]) || 0,
+      name: meta?.causality?.[createType] || `Type ${createType}`,
+      desc: detail.desc || '', v1: detail.v1 || '', v2: detail.v2 || '', v3: detail.v3 || ''
+    }
+    updateCausality(row)
+    setDetailsCache(previous => ({ ...previous, [id]: row }))
+    const expression = creatingFor === 'expression'
+      ? (exprText.trim() ? `(${exprText.trim()}) & ${id}` : String(id))
+      : exprText.replace(new RegExp(`\\b${creatingFor}\\b`, 'g'), String(id))
+    handleTextChange(expression)
+    setNextCausalityId(id + 1)
+    setCreatingFor(null)
+    setCreateError('')
+    setFeedbackMsg(creatingFor === 'expression'
+      ? `Đã tạo Causality #${id} trong bản nháp và thêm vào biểu thức.`
+      : `Đã tạo Causality #${id} trong bản nháp và thay ID #${creatingFor} trong biểu thức.`)
+  }
+
   // Save modified causality to database
   const handleSaveCondition = async (id) => {
-    const item = causalityDrafts[id] || detailsCache[id]
+    const item = detailsCache[id] || causalityDrafts[id] ? { ...detailsCache[id], ...causalityDrafts[id] } : null
     if (!item) return
     setSavingId(id)
     try {
@@ -270,7 +311,31 @@ export function CausalityExpressionEditor({
           <span>{searchOpen ? 'Đóng tra cứu' : '🔍 Tra cứu điều kiện'}</span>
           {searchOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </button>
+        {allowEditValues && <button type="button" className="search-toggle-btn" onClick={() => creatingFor === 'expression' ? setCreatingFor(null) : void openCreateCausality()}>
+          <Plus size={12} /><span>{creatingFor === 'expression' ? 'Đóng tạo mới' : 'Tạo causality mới'}</span>
+        </button>}
       </div>
+
+      {creatingFor === 'expression' && <div className="causality-create-inline expression-causality-create">
+        <strong>Tạo causality mới cho biểu thức</strong>
+        <div className="form-field"><label>Loại điều kiện</label>
+          <select value={createType} onChange={event => setCreateType(Number(event.target.value))}>
+            {Object.entries(meta?.causality || {}).map(([typeId, name]) => <option key={typeId} value={typeId}>[{typeId}] {name}</option>)}
+          </select>
+        </div>
+        {meta?.causality_details?.[createType]?.desc && <p className="hint-text">{meta.causality_details[createType].desc}</p>}
+        <div className="node-vals-inputs">
+          {[1, 2, 3].map((number, index) => {
+            const hint = meta?.causality_details?.[createType] || {}
+            return <div className="val-field" key={number}><label>{hint[`v${number}`] || `Value ${number} (cau_val${number})`}</label>
+              <input type="number" value={createValues[index]} onChange={event => setCreateValues(previous => previous.map((value, i) => i === index ? event.target.value : value))} />
+            </div>
+          })}
+        </div>
+        <small>ID mới dự kiến: #{nextCausalityId}</small>
+        {createError && <p className="passive-compiler-error">{createError}</p>}
+        <button type="button" className="btn primary-btn" onClick={createCausality}><Plus size={13} /> Tạo và thêm vào biểu thức</button>
+      </div>}
 
       {/* Main Expression Input */}
       <div className={`expr-input-wrapper ${parseError ? 'has-error' : (exprText.trim() ? 'is-valid' : '')}`}>
@@ -364,7 +429,7 @@ export function CausalityExpressionEditor({
 
           <div className="inspector-cards-grid">
             {extractedIds.map(id => {
-              const item = causalityDrafts[id] || detailsCache[id]
+              const item = detailsCache[id] || causalityDrafts[id] ? { ...detailsCache[id], ...causalityDrafts[id] } : null
               const typeName = item?.name || meta?.causality?.[id] || `Condition ID #${id}`
               const desc = item?.desc || meta?.causality_details?.[id]?.desc || ''
               const v1Label = item?.v1 || meta?.causality_details?.[id]?.v1 || 'Value 1'
@@ -377,16 +442,12 @@ export function CausalityExpressionEditor({
                     <span className="node-id-pill">ID #{id}</span>
                     <strong className="node-title">{typeName}</strong>
                     {allowEditValues && item && (
-                      <button
-                        type="button"
-                        className="save-node-btn"
-                        onClick={() => handleSaveCondition(id)}
-                        disabled={savingId === id}
-                        title="Giữ các giá trị này trong SQL patch"
-                      >
-                        <Save size={12} />
-                        <span>{savingId === id ? 'Lưu...' : 'Lưu'}</span>
-                      </button>
+                      <>
+                        <button type="button" className="save-node-btn" onClick={() => handleSaveCondition(id)}
+                          disabled={savingId === id} title="Giữ các giá trị này trong SQL patch">
+                          <Save size={12} /><span>{savingId === id ? 'Lưu...' : 'Lưu'}</span>
+                        </button>
+                      </>
                     )}
                   </div>
 
