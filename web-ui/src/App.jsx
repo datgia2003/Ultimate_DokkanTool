@@ -752,6 +752,7 @@ export function App() {
                           onChange={handleDraftChange}
                           meta={meta}
                           card={card}
+                          formDrafts={draftsByCard}
                           onAllocateBattleParam={allocateBattleParam}
                           onPlayAnim={() => setPlayerOpen(true)}
                         />

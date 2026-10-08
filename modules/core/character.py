@@ -267,6 +267,7 @@ def load_character_context(card_id=None, passive_id=None, leader_id=None, specia
     ctx['standby_link'] = None
     ctx['standby_set'] = None
     ctx['standby_skills'] = []
+    ctx['standby_finish_relations'] = []
     cssr = query_db_one("SELECT * FROM card_standby_skill_set_relations WHERE card_id = ?", (cid,))
     st_set_id = None
     if cssr:
@@ -277,6 +278,13 @@ def load_character_context(card_id=None, passive_id=None, leader_id=None, specia
             if st_set:
                 ctx['standby_set'] = dict(st_set)
                 ctx['standby_skills'] = [dict(r) for r in query_db_all("SELECT * FROM standby_skills WHERE standby_skill_set_id = ?", (st_set_id,))]
+                ctx['standby_finish_relations'] = [dict(r) for r in query_db_all("""
+                    SELECT relation.*, finish_skill_sets.name AS finish_name
+                    FROM standby_skill_set_finish_skill_set_relations AS relation
+                    LEFT JOIN finish_skill_sets ON finish_skill_sets.id = relation.finish_skill_set_id
+                    WHERE relation.standby_skill_set_id = ?
+                    ORDER BY relation.id ASC
+                """, (st_set_id,))]
 
     # 5. Finish Skills (support multiple Finish Skills per card)
     ctx['finish_skill_sets'] = []

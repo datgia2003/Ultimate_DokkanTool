@@ -5,6 +5,7 @@ import json
 import shutil
 import datetime
 import sqlite3
+import uuid
 import streamlit as st
 from modules.core.config import DB_PATH
 from modules.core.db import get_db_connection, get_table_columns, get_relation_id, query_db_one, query_db_all
@@ -637,6 +638,8 @@ def _allocate_new_attack_rows(contexts, allocation_state):
                 continue
             for row in records:
                 links = {'active_skill_set_id': 'active_skill_sets', 'standby_skill_set_id': 'standby_skill_sets'}
+                if table == 'standby_skill_set_finish_skill_set_relations':
+                    links['finish_skill_set_id'] = 'finish_skill_sets'
                 if table == 'transformation_descriptions':
                     links = {'skill_id': description_tables[row['skill_type']]}
                 rows.append((table, row, links))
@@ -826,6 +829,69 @@ def compile_character_chain_sql(card_id: int, changes: dict = None, raw_sql: str
         for table, row in shared_rows(cctx):
             if row.get('id'):
                 row.update(shared_changes.get((table, int(row['id'])), {}))
+
+    # Finish sets belong to a card form, while the game resolves a Standby's
+    # finish choices through standby_skill_set_finish_skill_set_relations.
+    # Keep that join in sync with Finish sets on the form(s) reached by the
+    # Standby's Transformation efficacy, including Finish sets created in the
+    # current drafts (which are not present in the imported/database snapshot).
+    contexts_by_card = {int(ctx['card']['id']): ctx for ctx in contexts if ctx.get('card')}
+    for standby_ctx in contexts:
+        standby_set = standby_ctx.get('standby_set')
+        if not standby_set:
+            continue
+        existing_links = list(standby_ctx.get('standby_finish_relations') or [])
+        cloned_rows = standby_ctx.get('_cloned_skill_rows', {}).get(
+            'standby_skill_set_finish_skill_set_relations', [])
+        linked_finish_ids = {
+            int(row.get('finish_skill_set_id') or 0)
+            for row in [*existing_links, *cloned_rows]
+            if int(row.get('finish_skill_set_id') or 0)
+        }
+        targets = set()
+        for skill in standby_ctx.get('standby_skills', []):
+            if int(skill.get('efficacy_type') or 0) != 103:
+                continue
+            values = skill.get('efficacy_values') or []
+            if isinstance(values, str):
+                try:
+                    values = json.loads(values)
+                except (TypeError, ValueError):
+                    continue
+            if isinstance(values, (list, tuple)) and values:
+                try:
+                    target_id = int(values[0])
+                except (TypeError, ValueError):
+                    continue
+                if target_id > 0:
+                    targets.add(target_id)
+        if not targets:
+            continue
+        cloned_rows = list(cloned_rows)
+        for target_id in targets:
+            target_ctx = contexts_by_card.get(target_id)
+            if target_ctx is None:
+                target_ctx = load_character_context(card_id=target_id)
+            for finish_item in (target_ctx or {}).get('finish_skill_sets', []):
+                finish_set = finish_item.get('set') or {}
+                finish_id = int(finish_set.get('id') or finish_item.get('link', {}).get('finish_skill_set_id') or 0)
+                if not finish_id or finish_id in linked_finish_ids:
+                    continue
+                linked_finish_ids.add(finish_id)
+                relation_id = -(uuid.uuid4().int & ((1 << 48) - 1))
+                timestamp = (finish_item.get('link') or {}).get('updated_at') or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                cloned_rows.append({
+                    'id': relation_id,
+                    'standby_skill_set_id': standby_set['id'],
+                    'finish_skill_set_id': finish_id,
+                    'created_at': (finish_item.get('link') or {}).get('created_at') or timestamp,
+                    'updated_at': timestamp,
+                })
+        if len(cloned_rows) > len(standby_ctx.get('_cloned_skill_rows', {}).get(
+                'standby_skill_set_finish_skill_set_relations', [])):
+            standby_ctx.setdefault('_cloned_skill_rows', {})[
+                'standby_skill_set_finish_skill_set_relations'] = cloned_rows
+
     _allocate_passive_sets(contexts, allocation_state)
     _allocate_new_attack_rows(contexts, allocation_state)
     _allocate_passive_relations(contexts, allocation_state)

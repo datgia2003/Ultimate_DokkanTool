@@ -10,15 +10,76 @@ import { SkillClone } from '../common/SkillClone'
 import { makeBattleParamDraft, updateBattleParamDrafts } from './battleParamDrafts'
 import { BgmCardLookup } from '../common/BgmCardLookup'
 
-export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam }) {
+export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, transformationDescriptions = [], onAllocateBattleParam, formDrafts = {} }) {
   const currentSet = draft.standby_set !== undefined ? draft.standby_set : standby?.set
   const currentSkills = draft.standby_skills !== undefined ? draft.standby_skills : (standby?.skills || [])
   const [proposal, setProposal] = useState(null)
   const [compiling, setCompiling] = useState(false)
   const [error, setError] = useState('')
+  const [finishSyncBusy, setFinishSyncBusy] = useState(false)
+  const [finishSyncMessage, setFinishSyncMessage] = useState('')
   const [playingBgm, setPlayingBgm] = useState(false)
   const audioRef = useRef(null)
   const cloneControl = <SkillClone kind="standby" card={card} draft={draft} onChange={onChange} onCloned={() => setProposal(null)} />
+  const getTransformationTargetIds = () => [...new Set(currentSkills
+    .filter(skill => Number(skill.efficacy_type) === 103)
+    .map(skill => {
+      try {
+        const values = Array.isArray(skill.efficacy_values)
+          ? skill.efficacy_values
+          : JSON.parse(skill.efficacy_values || '[]')
+        return Number(Array.isArray(values) ? values[0] : 0)
+      } catch { return 0 }
+    })
+    .filter(id => Number.isInteger(id) && id > 0))]
+  const syncFinishFromTargets = async () => {
+    if (!currentSet?.id || finishSyncBusy) return
+    setFinishSyncBusy(true)
+    setFinishSyncMessage('')
+    setError('')
+    try {
+      const targetIds = getTransformationTargetIds()
+      if (!targetIds.length) throw new Error('Standby chưa có efficacy Transformation trỏ tới form đích.')
+      const targetCards = await Promise.all(targetIds.map(id => api.getCard(id)))
+      const clonedRows = draft._cloned_skill_rows?.standby_skill_set_finish_skill_set_relations || []
+      const existingIds = new Set([
+        ...(standby?.finish_relations || []).map(row => Number(row.finish_skill_set_id)),
+        ...clonedRows.map(row => Number(row.finish_skill_set_id))
+      ])
+      const additions = []
+      for (let index = 0; index < targetCards.length; index++) {
+        const target = targetCards[index]
+        const targetDraft = formDrafts[String(targetIds[index])] || formDrafts[targetIds[index]] || {}
+        const finishSets = targetDraft.finish_skill_sets !== undefined ? targetDraft.finish_skill_sets : (target.finish || [])
+        for (const finish of finishSets) {
+          const finishId = Number(finish?.set?.id || finish?.link?.finish_skill_set_id)
+          if (!finishId || existingIds.has(finishId)) continue
+          existingIds.add(finishId)
+          const timestamp = finish.link?.updated_at || finish.link?.created_at || new Date().toISOString().slice(0, 19).replace('T', ' ')
+          additions.push({
+            id: newDraftId(),
+            standby_skill_set_id: currentSet.id,
+            finish_skill_set_id: finishId,
+            created_at: finish.link?.created_at || timestamp,
+            updated_at: timestamp
+          })
+        }
+      }
+      if (!additions.length) {
+        setFinishSyncMessage('Các Finish Skill của form đích đã được nối với Standby này rồi.')
+        return
+      }
+      onChange('_cloned_skill_rows', {
+        ...(draft._cloned_skill_rows || {}),
+        standby_skill_set_finish_skill_set_relations: [...clonedRows, ...additions]
+      })
+      setFinishSyncMessage(`Đã nối ${additions.length} Finish Skill từ form đích. Nhấn Save mod để lưu vào ZIP.`)
+    } catch (err) {
+      setError(err.message || 'Không thể đồng bộ Finish Skill từ form đích.')
+    } finally {
+      setFinishSyncBusy(false)
+    }
+  }
   useEffect(() => () => {
     const audio = audioRef.current
     if (audio) {
@@ -407,6 +468,19 @@ export function TabStandby({ standby, draft, onChange, meta, card, onPlayAnim, t
             meta={meta}
           />
         </div>
+      </div>
+
+      <div className="form-card" style={{ marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+        <div>
+          <strong>Finish Skill của form đích</strong>
+          <p className="hint-text" style={{ margin: '5px 0 0' }}>
+            Nối Finish Skill của các form được trỏ tới bằng efficacy Transformation với Standby này để game nhận đúng Finish khi kết thúc Standby.
+          </p>
+          {finishSyncMessage && <p className="hint-text" role="status" style={{ color: '#80d8ff', margin: '7px 0 0' }}>{finishSyncMessage}</p>}
+        </div>
+        <button type="button" className="btn secondary-btn" disabled={finishSyncBusy} onClick={syncFinishFromTargets}>
+          {finishSyncBusy ? 'Đang đồng bộ…' : 'Đồng bộ Finish từ form đích'}
+        </button>
       </div>
 
       {/* Standby Skill Effects List */}

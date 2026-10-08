@@ -2,6 +2,14 @@
 
 Các thay đổi được ghi lại từ phiên bản `1.0.1` trở đi.
 
+## [1.0.5.6] - 2026-10-08
+
+### Standby và Finish Skill
+
+- Tự nối Finish Skill của form đích vào Standby khi xuất SQL/ZIP, bao gồm Finish Skill mới tạo trong bản nháp.
+- Ánh xạ đúng ID Finish Skill mới khi tạo liên kết để game nhận Finish sau Standby.
+- Hiển thị liên kết Finish hiện có và thêm nút đồng bộ Finish từ các form đích; thao tác đồng bộ đọc cả Finish trong bản nháp.
+
 ## [1.0.5.5] - 2026-10-06
 
 ### Lua Animation Editor và Lua Transfer

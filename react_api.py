@@ -1171,7 +1171,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "standby": {
                         "set": ctx.get("standby_set"),
                         "link": ctx.get("standby_link"),
-                        "skills": ctx.get("standby_skills", [])
+                        "skills": ctx.get("standby_skills", []),
+                        "finish_relations": ctx.get("standby_finish_relations", [])
                     },
                     "finish": ctx.get("finish_skill_sets", []),
                     "specials": ctx.get("card_specials", []),
